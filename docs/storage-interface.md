@@ -121,6 +121,23 @@ The storage contract should support:
 - storing evidence and confidence
 - storing user override state
 
+### Normalization Ownership
+
+Normalization for canonical entity fields (for example `normalized_name`) is a shared domain concern.
+
+Policy:
+
+- Normalization rules should be implemented in shared `trackstash-core` domain utilities.
+- Ingestion and orchestration modules should call shared normalization utilities before repository upserts.
+- Storage adapters should persist and query normalized fields, but should not define normalization algorithms.
+- Canonical duplicate detection should use a match-first strategy:
+  - first by external reference `(source, external_id)` when available
+  - then by normalized identity fields (for example `normalized_name`)
+  - create a new canonical row only when no deterministic match exists
+- Ambiguous normalized matches should not auto-merge without additional evidence.
+
+For label-like punctuation variants, the preferred behavior is one canonical identity with aliases retained for source fidelity.
+
 ## Repository Responsibilities
 
 ### `ILabelRepository`
