@@ -95,6 +95,14 @@ The storage interface should support:
 
 Embeddings are derived data and should be written separately from canonical entity rows.
 
+Embedding timing policy:
+
+- Canonical upserts must not depend on successful embedding generation.
+- Default behavior is deferred embedding generation after canonical write commit.
+- Embeddings should be generated or regenerated when embedding document hash changes.
+- Synchronous embedding generation may be used as an explicit opt-in mode for small interactive workflows.
+- Retry and backfill workflows should be supported so pending or failed embeddings can be repaired later.
+
 The storage contract should support:
 
 - saving embedding source documents
