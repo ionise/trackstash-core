@@ -10,8 +10,6 @@ internal static class Migrations
     ];
 
     private const string InitialSchema = """
-        PRAGMA journal_mode = WAL;
-
         CREATE TABLE IF NOT EXISTS label (
             label_id            TEXT NOT NULL PRIMARY KEY,
             name                TEXT,
