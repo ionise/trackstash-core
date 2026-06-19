@@ -247,6 +247,24 @@ internal sealed class SqliteArtistRepository : IArtistRepository
 
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
+        foreach (var alias in artist.Aliases)
+        {
+            using var aliasCmd = _connection.CreateCommand();
+            aliasCmd.Transaction = _transaction;
+            aliasCmd.CommandText = """
+                INSERT INTO artist_alias (artist_id, value, normalized_value, is_primary)
+                VALUES (@artistId, @value, @normalizedValue, @isPrimary)
+                ON CONFLICT (artist_id, value) DO UPDATE SET
+                    normalized_value = excluded.normalized_value,
+                    is_primary = excluded.is_primary
+                """;
+            aliasCmd.Parameters.AddWithValue("@artistId", artist.Id);
+            aliasCmd.Parameters.AddWithValue("@value", alias.Value);
+            aliasCmd.Parameters.AddWithValue("@normalizedValue", alias.NormalizedValue ?? (object)DBNull.Value);
+            aliasCmd.Parameters.AddWithValue("@isPrimary", alias.IsPrimary ? 1 : 0);
+            await aliasCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         foreach (var externalRef in artist.ExternalReferences)
         {
             using var refCmd = _connection.CreateCommand();

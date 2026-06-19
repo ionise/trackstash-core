@@ -1,4 +1,29 @@
+# Build outputs
 bin/
 obj/
 **/bin/
 **/obj/
+
+# Test and coverage artifacts
+TestResults/
+**/TestResults/
+coverage/
+**/coverage/
+*.coverage
+*.coveragexml
+
+# IDE/editor artifacts
+.vs/
+*.user
+*.suo
+
+# OS artifacts
+.DS_Store
+
+# Local SQLite and transient DB files
+*.db-wal
+*.db-shm
+
+# NuGet/package outputs
+*.nupkg
+*.snupkg
