@@ -51,6 +51,8 @@ public sealed record Recording : CanonicalEntity
     public IReadOnlyList<RecordingArtistCredit> ArtistCredits { get; init; } = Array.Empty<RecordingArtistCredit>();
 
     public IReadOnlyList<RecordingReleaseLink> ReleaseLinks { get; init; } = Array.Empty<RecordingReleaseLink>();
+
+    public IReadOnlyList<RecordingRelationship> Relationships { get; init; } = Array.Empty<RecordingRelationship>();
 }
 
 public sealed record MediaFile
@@ -200,6 +202,23 @@ public sealed record RecordingReleaseLink
     public int? DiscNumber { get; init; }
 
     public int? TrackNumber { get; init; }
+}
+
+public sealed record RecordingRelationship
+{
+    public required string RelatedRecordingId { get; init; }
+
+    public required string RelationshipType { get; init; }
+
+    public string? Source { get; init; }
+
+    public decimal? Confidence { get; init; }
+
+    public string? Notes { get; init; }
+
+    public DateTimeOffset? CreatedUtc { get; init; }
+
+    public DateTimeOffset? UpdatedUtc { get; init; }
 }
 
 public sealed record StorageCapabilities

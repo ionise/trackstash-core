@@ -649,6 +649,48 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
             creditCmd.Parameters.AddWithValue("@position", credit.Position ?? (object)DBNull.Value);
             await creditCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
+
+        foreach (var link in recording.ReleaseLinks)
+        {
+            using var linkCmd = _connection.CreateCommand();
+            linkCmd.Transaction = _transaction;
+            linkCmd.CommandText = """
+                INSERT INTO release_recording (release_id, recording_id, disc_number, track_number)
+                VALUES (@releaseId, @recordingId, @discNumber, @trackNumber)
+                ON CONFLICT (release_id, recording_id) DO UPDATE SET
+                    disc_number = excluded.disc_number,
+                    track_number = excluded.track_number
+                """;
+            linkCmd.Parameters.AddWithValue("@releaseId", link.ReleaseId);
+            linkCmd.Parameters.AddWithValue("@recordingId", recording.Id);
+            linkCmd.Parameters.AddWithValue("@discNumber", link.DiscNumber ?? (object)DBNull.Value);
+            linkCmd.Parameters.AddWithValue("@trackNumber", link.TrackNumber ?? (object)DBNull.Value);
+            await linkCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach (var relationship in recording.Relationships)
+        {
+            using var relCmd = _connection.CreateCommand();
+            relCmd.Transaction = _transaction;
+            relCmd.CommandText = """
+                INSERT INTO recording_relationship (from_recording_id, to_recording_id, relationship_type, source, confidence, notes, created_utc, updated_utc)
+                VALUES (@fromRecordingId, @toRecordingId, @relationshipType, @source, @confidence, @notes, @createdUtc, @updatedUtc)
+                ON CONFLICT (from_recording_id, to_recording_id, relationship_type) DO UPDATE SET
+                    source = excluded.source,
+                    confidence = excluded.confidence,
+                    notes = excluded.notes,
+                    updated_utc = excluded.updated_utc
+                """;
+            relCmd.Parameters.AddWithValue("@fromRecordingId", recording.Id);
+            relCmd.Parameters.AddWithValue("@toRecordingId", relationship.RelatedRecordingId);
+            relCmd.Parameters.AddWithValue("@relationshipType", relationship.RelationshipType);
+            relCmd.Parameters.AddWithValue("@source", relationship.Source ?? (object)DBNull.Value);
+            relCmd.Parameters.AddWithValue("@confidence", relationship.Confidence ?? (object)DBNull.Value);
+            relCmd.Parameters.AddWithValue("@notes", relationship.Notes ?? (object)DBNull.Value);
+            relCmd.Parameters.AddWithValue("@createdUtc", relationship.CreatedUtc?.ToString("O") ?? (object)DBNull.Value);
+            relCmd.Parameters.AddWithValue("@updatedUtc", relationship.UpdatedUtc?.ToString("O") ?? (object)DBNull.Value);
+            await relCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static Recording ReadRecording(SqliteDataReader reader) => new()

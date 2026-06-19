@@ -150,6 +150,18 @@ internal static class Migrations
             PRIMARY KEY (recording_id, artist_id)
         );
 
+        CREATE TABLE IF NOT EXISTS recording_relationship (
+            from_recording_id TEXT NOT NULL REFERENCES recording(recording_id),
+            to_recording_id   TEXT NOT NULL REFERENCES recording(recording_id),
+            relationship_type TEXT NOT NULL,
+            source            TEXT,
+            confidence        REAL,
+            notes             TEXT,
+            created_utc       TEXT,
+            updated_utc       TEXT,
+            PRIMARY KEY (from_recording_id, to_recording_id, relationship_type)
+        );
+
         CREATE TABLE IF NOT EXISTS release_recording (
             release_id   TEXT    NOT NULL REFERENCES release(release_id),
             recording_id TEXT    NOT NULL REFERENCES recording(recording_id),
