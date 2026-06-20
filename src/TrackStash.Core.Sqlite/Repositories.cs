@@ -142,6 +142,15 @@ internal sealed class SqliteLabelRepository : ILabelRepository
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async ValueTask<int> CountAsync(CancellationToken cancellationToken = default)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.Transaction = _transaction;
+        cmd.CommandText = "SELECT COUNT(*) FROM label";
+        var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return (int)(long)(result ?? 0L);
+    }
+
     private static Label ReadLabel(SqliteDataReader reader) => new()
     {
         Id = reader.GetString(0),
@@ -285,6 +294,15 @@ internal sealed class SqliteArtistRepository : IArtistRepository
             refCmd.Parameters.AddWithValue("@payloadJson", externalRef.PayloadJson ?? (object)DBNull.Value);
             await refCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    public async ValueTask<int> CountAsync(CancellationToken cancellationToken = default)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.Transaction = _transaction;
+        cmd.CommandText = "SELECT COUNT(*) FROM artist";
+        var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return (int)(long)(result ?? 0L);
     }
 
     private static Artist ReadArtist(SqliteDataReader reader) => new()
@@ -464,6 +482,15 @@ internal sealed class SqliteReleaseRepository : IReleaseRepository
             linkCmd.Parameters.AddWithValue("@role", link.Role ?? (object)DBNull.Value);
             await linkCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    public async ValueTask<int> CountAsync(CancellationToken cancellationToken = default)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.Transaction = _transaction;
+        cmd.CommandText = "SELECT COUNT(*) FROM release";
+        var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return (int)(long)(result ?? 0L);
     }
 
     private static Release ReadRelease(SqliteDataReader reader) => new()
@@ -693,6 +720,15 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
         }
     }
 
+    public async ValueTask<int> CountAsync(CancellationToken cancellationToken = default)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.Transaction = _transaction;
+        cmd.CommandText = "SELECT COUNT(*) FROM recording";
+        var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return (int)(long)(result ?? 0L);
+    }
+
     private static Recording ReadRecording(SqliteDataReader reader) => new()
     {
         Id = reader.GetString(0),
@@ -801,6 +837,15 @@ internal sealed class SqliteMediaFileRepository : IMediaFileRepository
         cmd.Parameters.AddWithValue("@updatedUtc", mediaFile.UpdatedUtc?.ToString("O") ?? (object)DBNull.Value);
 
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask<int> CountAsync(CancellationToken cancellationToken = default)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.Transaction = _transaction;
+        cmd.CommandText = "SELECT COUNT(*) FROM media_file";
+        var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return (int)(long)(result ?? 0L);
     }
 
     private static MediaFile ReadMediaFile(SqliteDataReader reader) => new()

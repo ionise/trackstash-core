@@ -552,7 +552,7 @@ internal sealed class SqliteEntityDeleteService : IEntityDeleteService
         string entityId,
         CancellationToken cancellationToken = default)
     {
-        var query = $"SELECT source_payload_json FROM {entityType} WHERE {entityType}_id = @entityId";
+        var query = $"SELECT COALESCE(source_payload_json, '{{}}') FROM {entityType} WHERE {entityType}_id = @entityId";
         using var command = new SqliteCommand(query, _connection) { Transaction = _transaction };
         command.Parameters.AddWithValue("@entityId", entityId);
         return (string?)await command.ExecuteScalarAsync(cancellationToken);

@@ -1,5 +1,15 @@
 namespace TrackStash.Core.Storage;
 
+public sealed record StorageProviderDescriptor(
+    string Provider,
+    string? DatabasePath = null,
+    string? ConnectionString = null);
+
+public interface IStorageProviderFactory
+{
+    IStorageProvider Create(StorageProviderDescriptor descriptor);
+}
+
 public interface IStorageProvider
 {
     ValueTask<IUnitOfWork> BeginUnitOfWorkAsync(CancellationToken cancellationToken = default);
@@ -47,6 +57,8 @@ public interface ILabelRepository
 
     ValueTask<Label?> GetByNormalizedNameAsync(string normalizedName, CancellationToken cancellationToken = default);
 
+    ValueTask<int> CountAsync(CancellationToken cancellationToken = default);
+
     ValueTask UpsertAsync(Label label, CancellationToken cancellationToken = default);
 }
 
@@ -58,6 +70,8 @@ public interface IArtistRepository
 
     ValueTask<Artist?> GetByNormalizedNameAsync(string normalizedName, CancellationToken cancellationToken = default);
 
+    ValueTask<int> CountAsync(CancellationToken cancellationToken = default);
+
     ValueTask UpsertAsync(Artist artist, CancellationToken cancellationToken = default);
 }
 
@@ -68,6 +82,8 @@ public interface IReleaseRepository
     ValueTask<Release?> GetByExternalRefAsync(string source, string externalId, CancellationToken cancellationToken = default);
 
     ValueTask<Release?> GetByNormalizedTitleAndLabelAsync(string normalizedTitle, string? labelId, CancellationToken cancellationToken = default);
+
+    ValueTask<int> CountAsync(CancellationToken cancellationToken = default);
 
     ValueTask UpsertAsync(Release release, CancellationToken cancellationToken = default);
 }
@@ -82,6 +98,8 @@ public interface IRecordingRepository
 
     ValueTask<Recording?> GetByNormalizedTitleAndMixNameAsync(string normalizedTitle, string? normalizedMixName, CancellationToken cancellationToken = default);
 
+    ValueTask<int> CountAsync(CancellationToken cancellationToken = default);
+
     ValueTask UpsertAsync(Recording recording, CancellationToken cancellationToken = default);
 }
 
@@ -92,6 +110,8 @@ public interface IMediaFileRepository
     ValueTask<MediaFile?> GetByPathAsync(string path, CancellationToken cancellationToken = default);
 
     ValueTask<MediaFile?> GetByContentHashAsync(string contentHash, CancellationToken cancellationToken = default);
+
+    ValueTask<int> CountAsync(CancellationToken cancellationToken = default);
 
     ValueTask UpsertAsync(MediaFile mediaFile, CancellationToken cancellationToken = default);
 }
