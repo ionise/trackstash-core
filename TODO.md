@@ -122,21 +122,24 @@
 - [x] Reconcile delete behavior described in schema docs with the current SQLite migration behavior
 - [x] Classify dependencies as blocking references vs entity-owned cleanup rows
 - [x] Decide join-table asymmetry rules, including release-side cleanup vs recording-side blockers for `release_recording`
-- [ ] Define shared result models for delete dependency analysis and dry-run reporting
-- [ ] Define shared core contracts for dependency analysis and transactional entity deletion
-- [ ] Implement SQLite-backed dependency analysis for label, artist, release, and recording deletes
-- [ ] Implement SQLite-backed transactional delete orchestration for safe owned-row cleanup
-- [ ] Add integration tests for blocked deletes, dry-run analysis, and successful deletes
+- [x] Define shared result models for delete dependency analysis and dry-run reporting
+- [x] Define shared core contracts for dependency analysis and transactional entity deletion
+- [x] Implement SQLite-backed dependency analysis for label, artist, release, and recording deletes
+- [x] Implement SQLite-backed transactional delete orchestration for safe owned-row cleanup
+- [x] Add integration tests for blocked deletes, dry-run analysis, and successful deletes
 
 ### 9) Add recycle-bin retention for deletes
 
-- [ ] Define a core recycle-bin requirement for canonical entity deletes before implementation begins
-- [ ] Decide which deleted rows are retained as tombstones versus fully purged later
-- [ ] Define restore prerequisites and limits for labels, artists, releases, and recordings
-- [ ] Add shared result models for recycle-bin capture and restore planning
-- [ ] Define shared core contracts for delete journaling, tombstone lookup, and restore orchestration
-- [ ] Implement SQLite-backed recycle-bin capture in the same transaction as delete
-- [ ] Add integration tests for retained delete records and restore safety rules
+- [x] Define a core recycle-bin requirement for canonical entity deletes before implementation begins
+- [x] Decide which deleted rows are retained as tombstones versus fully purged later
+- [x] Define restore prerequisites and limits for labels, artists, releases, and recordings
+- [x] Add shared result models for recycle-bin capture and restore planning
+- [x] Define shared core contracts for delete journaling, tombstone lookup, and restore orchestration
+- [x] Add entity_tombstone table to SQLite migration with proper indexes
+- [x] Implement tombstone capture and lookups in SqliteEntityDeleteService
+- [x] Implement restore analysis and validation in SqliteEntityDeleteService
+- [x] Implement restore data hydration (deserialize JSON back to canonical entities and owned rows)
+- [x] Add integration tests for delete with tombstone capture and restore safety checks
 
 ### 10) Pilot then full rollout
 

@@ -8,6 +8,7 @@ internal sealed class SqliteUnitOfWork : IUnitOfWork
     private readonly SqliteConnection _connection;
     private readonly SqliteTransaction _transaction;
     private bool _disposed;
+    private IEntityDeleteService? _entityDeleteService;
 
     public SqliteUnitOfWork(SqliteConnection connection, SqliteTransaction transaction)
     {
@@ -30,6 +31,7 @@ internal sealed class SqliteUnitOfWork : IUnitOfWork
     public IMediaFileRepository MediaFiles { get; }
     public IMatchRepository Matches { get; }
     public IEmbeddingRepository? Embeddings { get; }
+    public IEntityDeleteService? EntityDelete => _entityDeleteService ??= new SqliteEntityDeleteService(_connection, _transaction);
 
     public async ValueTask CommitAsync(CancellationToken cancellationToken = default)
     {

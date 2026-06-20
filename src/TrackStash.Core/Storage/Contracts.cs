@@ -25,6 +25,8 @@ public interface IUnitOfWork : IAsyncDisposable
 
     IEmbeddingRepository? Embeddings { get; }
 
+    IEntityDeleteService? EntityDelete { get; }
+
     ValueTask CommitAsync(CancellationToken cancellationToken = default);
 
     ValueTask RollbackAsync(CancellationToken cancellationToken = default);

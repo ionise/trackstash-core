@@ -222,5 +222,24 @@ internal static class Migrations
         );
 
         CREATE INDEX IF NOT EXISTS idx_embedding_document_hash ON embedding_document (document_hash);
+
+        CREATE TABLE IF NOT EXISTS entity_tombstone (
+            entity_type      TEXT    NOT NULL,
+            entity_id        TEXT    NOT NULL,
+            entity_data_json TEXT    NOT NULL,
+            deleted_by       TEXT,
+            delete_reason    TEXT,
+            deleted_utc      TEXT    NOT NULL,
+            purge_after_utc  TEXT,
+            is_purged        INTEGER NOT NULL DEFAULT 0,
+            created_utc      TEXT,
+            updated_utc      TEXT,
+            PRIMARY KEY (entity_type, entity_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_entity_tombstone_type ON entity_tombstone (entity_type);
+        CREATE INDEX IF NOT EXISTS idx_entity_tombstone_deleted_utc ON entity_tombstone (deleted_utc);
+        CREATE INDEX IF NOT EXISTS idx_entity_tombstone_purge_after_utc ON entity_tombstone (purge_after_utc);
+        CREATE INDEX IF NOT EXISTS idx_entity_tombstone_is_purged ON entity_tombstone (is_purged);
         """;
 }
