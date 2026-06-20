@@ -271,7 +271,6 @@ public interface IEntityDeleteService
         string? deletedBy = null,
         string? deleteReason = null,
         DateTimeOffset? purgeAfterUtc = null,
-        IUnitOfWork unitOfWork = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -290,7 +289,6 @@ public interface IEntityDeleteService
         string entityType,
         int pageSize = 100,
         int offset = 0,
-        IUnitOfWork unitOfWork = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

@@ -43,13 +43,12 @@ internal sealed class SqliteEntityDeleteService : IEntityDeleteService
         string? deletedBy = null,
         string? deleteReason = null,
         DateTimeOffset? purgeAfterUtc = null,
-        IUnitOfWork unitOfWork = null,
         CancellationToken cancellationToken = default)
     {
         try
         {
             // First, analyze dependencies
-            var analysis = await AnalyzeDependenciesAsync(entityType, entityId, unitOfWork, cancellationToken);
+            var analysis = await AnalyzeDependenciesAsync(entityType, entityId, null!, cancellationToken);
 
             if (!analysis.IsSafeToDelete)
             {
@@ -157,7 +156,6 @@ internal sealed class SqliteEntityDeleteService : IEntityDeleteService
         string entityType,
         int pageSize = 100,
         int offset = 0,
-        IUnitOfWork unitOfWork = null,
         CancellationToken cancellationToken = default)
     {
         const string query = """

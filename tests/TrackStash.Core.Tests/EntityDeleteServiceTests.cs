@@ -125,8 +125,7 @@ public sealed class EntityDeleteServiceTests
             "label",
             "label-1",
             deletedBy: "test-user",
-            deleteReason: "cleanup",
-            unitOfWork: uow2);
+            deleteReason: "cleanup");
         await uow2.CommitAsync();
 
         Assert.True(result.Success);
@@ -173,8 +172,7 @@ public sealed class EntityDeleteServiceTests
         await using var uow2 = await provider.BeginUnitOfWorkAsync();
         var result = await uow2.EntityDelete!.DeleteEntityAsync(
             "recording",
-            "rec-1",
-            unitOfWork: uow2);
+            "rec-1");
         await uow2.CommitAsync();
 
         // Result should indicate failure due to blockers
@@ -204,8 +202,7 @@ public sealed class EntityDeleteServiceTests
         var deleteResult = await uow2.EntityDelete!.DeleteEntityAsync(
             "label",
             "label-1",
-            deletedBy: "test-user",
-            unitOfWork: uow2);
+            deletedBy: "test-user");
         await uow2.CommitAsync();
 
         Assert.True(deleteResult.Success);
@@ -234,15 +231,15 @@ public sealed class EntityDeleteServiceTests
 
         // Delete both labels
         await using var uow2 = await provider.BeginUnitOfWorkAsync();
-        await uow2.EntityDelete!.DeleteEntityAsync("label", "label-1", unitOfWork: uow2);
+        await uow2.EntityDelete!.DeleteEntityAsync("label", "label-1");
         await uow2.CommitAsync();
 
         await using var uow3 = await provider.BeginUnitOfWorkAsync();
-        await uow3.EntityDelete!.DeleteEntityAsync("label", "label-2", unitOfWork: uow3);
+        await uow3.EntityDelete!.DeleteEntityAsync("label", "label-2");
         await uow3.CommitAsync();
 
         await using var uow4 = await provider.BeginUnitOfWorkAsync();
-        var tombstones = await uow4.EntityDelete!.ListTombstonesAsync("label", pageSize: 10, offset: 0, unitOfWork: uow4);
+        var tombstones = await uow4.EntityDelete!.ListTombstonesAsync("label", pageSize: 10, offset: 0);
 
         Assert.Equal(2, tombstones.Count);
         Assert.Contains(tombstones, t => t.EntityId == "label-1");
@@ -268,7 +265,7 @@ public sealed class EntityDeleteServiceTests
         await uow.CommitAsync();
 
         await using var uow2 = await provider.BeginUnitOfWorkAsync();
-        var deleteResult = await uow2.EntityDelete!.DeleteEntityAsync("label", "label-1", unitOfWork: uow2);
+        var deleteResult = await uow2.EntityDelete!.DeleteEntityAsync("label", "label-1");
         await uow2.CommitAsync();
 
         await using var uow3 = await provider.BeginUnitOfWorkAsync();
@@ -302,7 +299,7 @@ public sealed class EntityDeleteServiceTests
         await uow.CommitAsync();
 
         await using var uow2 = await provider.BeginUnitOfWorkAsync();
-        await uow2.EntityDelete!.DeleteEntityAsync("label", "label-1", unitOfWork: uow2);
+        await uow2.EntityDelete!.DeleteEntityAsync("label", "label-1");
         await uow2.CommitAsync();
 
         await using var uow3 = await provider.BeginUnitOfWorkAsync();
