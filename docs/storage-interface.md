@@ -110,6 +110,13 @@ The storage contract should support:
 - querying by entity ID and model metadata
 - replacing an embedding when the source document hash changes
 
+Async orchestration guidance:
+
+- canonical write paths should publish an async embedding change notification and return without waiting for vector generation
+- an orchestration layer in `trackstash-core` should queue and process embedding jobs behind provider-agnostic interfaces
+- provider adapters may implement the work queue with local tables (SQLite for local development) or another backend for hosted deployments
+- queue and worker contracts should not reference provider-specific types so callers remain portable across providers
+
 ### Matches
 
 Matches are also derived data.
