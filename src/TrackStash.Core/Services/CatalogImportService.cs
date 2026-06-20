@@ -8,7 +8,8 @@ namespace TrackStash.Core.Services;
 
 public sealed record CatalogImportRequest(
     string CsvPath,
-    bool DryRun = false);
+    bool DryRun = false,
+    bool FailFast = false);
 
 public sealed record CatalogImportResult(
     string CsvPath,
@@ -16,6 +17,8 @@ public sealed record CatalogImportResult(
     int SucceededRows,
     int FailedRows,
     bool DryRun,
+    bool FailFast,
+    int WarningCount,
     IReadOnlyList<CatalogImportRowResult> RowResults);
 
 public sealed record CatalogImportRowResult(
@@ -24,7 +27,8 @@ public sealed record CatalogImportRowResult(
     string? EntityId,
     string? Action,
     bool Success,
-    string? Error);
+    string? Error,
+    IReadOnlyList<string> Warnings);
 
 // ── Service ────────────────────────────────────────────────────────────────────
 
@@ -63,6 +67,7 @@ public sealed class CatalogImportService
 
         // process in dependency order regardless of CSV row order
         var orderedTypes = new[] { "label", "artist", "release", "recording" };
+        var stopProcessing = false;
         foreach (var entityType in orderedTypes)
         {
             foreach (var row in rows.Where(r => string.Equals(r.Type, entityType, StringComparison.OrdinalIgnoreCase)))
@@ -78,12 +83,29 @@ public sealed class CatalogImportService
                         _           => FailRow(row, entityType, $"Unexpected type: {entityType}"),
                     };
                 results.Add(result);
+
+                if (request.FailFast && !result.Success)
+                {
+                    stopProcessing = true;
+                    break;
+                }
             }
+
+            if (stopProcessing)
+                break;
         }
 
-        var knownTypeSet = new HashSet<string>(orderedTypes, StringComparer.OrdinalIgnoreCase);
-        foreach (var row in rows.Where(r => !knownTypeSet.Contains(r.Type ?? "")))
-            results.Add(FailRow(row, row.Type ?? "unknown", $"Unknown entity type: '{row.Type}'"));
+        if (!stopProcessing)
+        {
+            var knownTypeSet = new HashSet<string>(orderedTypes, StringComparer.OrdinalIgnoreCase);
+            foreach (var row in rows.Where(r => !knownTypeSet.Contains(r.Type ?? "")))
+            {
+                var result = FailRow(row, row.Type ?? "unknown", $"Unknown entity type: '{row.Type}'");
+                results.Add(result);
+                if (request.FailFast)
+                    break;
+            }
+        }
 
         return new CatalogImportResult(
             CsvPath: request.CsvPath,
@@ -91,6 +113,8 @@ public sealed class CatalogImportService
             SucceededRows: results.Count(r => r.Success),
             FailedRows: results.Count(r => !r.Success),
             DryRun: request.DryRun,
+            FailFast: request.FailFast,
+            WarningCount: results.Sum(r => r.Warnings.Count),
             RowResults: results.OrderBy(r => r.RowNumber).ToList());
     }
 
@@ -132,7 +156,7 @@ public sealed class CatalogImportService
             await uow.CommitAsync(ct).ConfigureAwait(false);
 
             AddToMap(labelMap, row.Name, normalizedName, labelId);
-            return new CatalogImportRowResult(row.RowNumber, "label", labelId, action, true, null);
+            return new CatalogImportRowResult(row.RowNumber, "label", labelId, action, true, null, Array.Empty<string>());
         }
         catch (Exception ex) { return FailRow(row, "label", ex.Message); }
     }
@@ -175,7 +199,7 @@ public sealed class CatalogImportService
             await uow.CommitAsync(ct).ConfigureAwait(false);
 
             AddToMap(artistMap, row.Name, normalizedName, artistId);
-            return new CatalogImportRowResult(row.RowNumber, "artist", artistId, action, true, null);
+            return new CatalogImportRowResult(row.RowNumber, "artist", artistId, action, true, null, Array.Empty<string>());
         }
         catch (Exception ex) { return FailRow(row, "artist", ex.Message); }
     }
@@ -195,8 +219,9 @@ public sealed class CatalogImportService
             if (string.IsNullOrWhiteSpace(normalizedTitle))
                 return FailRow(row, "release", "Release title cannot normalize to an empty key.");
 
-            var labelId  = await ResolveLabelIdAsync(row.LabelRef, labelMap, ct).ConfigureAwait(false);
-            var artistId = await ResolveArtistIdAsync(row.ArtistRef, artistMap, ct).ConfigureAwait(false);
+            var warnings = new List<string>();
+            var labelId  = await ResolveLabelIdAsync(row.LabelRef, labelMap, warnings, ct).ConfigureAwait(false);
+            var artistId = await ResolveArtistIdAsync(row.ArtistRef, artistMap, warnings, ct).ConfigureAwait(false);
 
             await using var uow = await _provider.BeginUnitOfWorkAsync(ct).ConfigureAwait(false);
 
@@ -233,7 +258,7 @@ public sealed class CatalogImportService
             await uow.CommitAsync(ct).ConfigureAwait(false);
 
             AddToMap(releaseMap, row.Title, normalizedTitle, releaseId);
-            return new CatalogImportRowResult(row.RowNumber, "release", releaseId, action, true, null);
+            return new CatalogImportRowResult(row.RowNumber, "release", releaseId, action, true, null, warnings);
         }
         catch (Exception ex) { return FailRow(row, "release", ex.Message); }
     }
@@ -254,8 +279,9 @@ public sealed class CatalogImportService
                 return FailRow(row, "recording", "Recording title cannot normalize to an empty key.");
 
             var normalizedMix  = string.IsNullOrWhiteSpace(row.MixName) ? null : EntityNameNormalizer.NormalizeStrict(row.MixName);
-            var artistId       = await ResolveArtistIdAsync(row.ArtistRef, artistMap, ct).ConfigureAwait(false);
-            var releaseId      = await ResolveReleaseIdAsync(row.ReleaseRef, releaseMap, ct).ConfigureAwait(false);
+            var warnings       = new List<string>();
+            var artistId       = await ResolveArtistIdAsync(row.ArtistRef, artistMap, warnings, ct).ConfigureAwait(false);
+            var releaseId      = await ResolveReleaseIdAsync(row.ReleaseRef, releaseMap, warnings, ct).ConfigureAwait(false);
 
             await using var uow = await _provider.BeginUnitOfWorkAsync(ct).ConfigureAwait(false);
 
@@ -305,7 +331,7 @@ public sealed class CatalogImportService
             }, ct).ConfigureAwait(false);
             await uow.CommitAsync(ct).ConfigureAwait(false);
 
-            return new CatalogImportRowResult(row.RowNumber, "recording", recordingId, action, true, null);
+            return new CatalogImportRowResult(row.RowNumber, "recording", recordingId, action, true, null, warnings);
         }
         catch (Exception ex) { return FailRow(row, "recording", ex.Message); }
     }
@@ -313,7 +339,7 @@ public sealed class CatalogImportService
     // ── cross-entity reference resolution ─────────────────────────────────────
 
     private async Task<string?> ResolveLabelIdAsync(
-        string? refValue, Dictionary<string, string> sessionMap, CancellationToken ct)
+        string? refValue, Dictionary<string, string> sessionMap, List<string> warnings, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(refValue)) return null;
         if (sessionMap.TryGetValue(refValue, out var id)) return id;
@@ -328,11 +354,12 @@ public sealed class CatalogImportService
             var byName = await uow.Labels.GetByNormalizedNameAsync(norm, ct).ConfigureAwait(false);
             if (byName is not null) return byName.Id;
         }
+        warnings.Add($"Unresolved label reference: {refValue}");
         return null;
     }
 
     private async Task<string?> ResolveArtistIdAsync(
-        string? refValue, Dictionary<string, string> sessionMap, CancellationToken ct)
+        string? refValue, Dictionary<string, string> sessionMap, List<string> warnings, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(refValue)) return null;
         if (sessionMap.TryGetValue(refValue, out var id)) return id;
@@ -347,11 +374,12 @@ public sealed class CatalogImportService
             var byName = await uow.Artists.GetByNormalizedNameAsync(norm, ct).ConfigureAwait(false);
             if (byName is not null) return byName.Id;
         }
+        warnings.Add($"Unresolved artist reference: {refValue}");
         return null;
     }
 
     private async Task<string?> ResolveReleaseIdAsync(
-        string? refValue, Dictionary<string, string> sessionMap, CancellationToken ct)
+        string? refValue, Dictionary<string, string> sessionMap, List<string> warnings, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(refValue)) return null;
         if (sessionMap.TryGetValue(refValue, out var id)) return id;
@@ -366,6 +394,7 @@ public sealed class CatalogImportService
             var byName = await uow.Releases.GetByNormalizedTitleAndLabelAsync(norm, null, ct).ConfigureAwait(false);
             if (byName is not null) return byName.Id;
         }
+        warnings.Add($"Unresolved release reference: {refValue}");
         return null;
     }
 
@@ -379,7 +408,7 @@ public sealed class CatalogImportService
     }
 
     private static CatalogImportRowResult FailRow(CsvRow row, string entityType, string error) =>
-        new(row.RowNumber, entityType, null, null, false, error);
+        new(row.RowNumber, entityType, null, null, false, error, Array.Empty<string>());
 
     private static CatalogImportRowResult ValidateRowDryRun(CsvRow row)
     {
@@ -394,7 +423,7 @@ public sealed class CatalogImportService
         };
         return missing is not null
             ? FailRow(row, entityType, $"Missing required field: {missing}")
-            : new CatalogImportRowResult(row.RowNumber, entityType, null, "DryRun", true, null);
+            : new CatalogImportRowResult(row.RowNumber, entityType, null, "DryRun", true, null, Array.Empty<string>());
     }
 
     private static IReadOnlyList<EntityReference> BuildExternalRefs(string? source, string? externalId, DateTimeOffset now)
