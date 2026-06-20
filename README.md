@@ -12,5 +12,8 @@ Shared TrackStash architecture, domain contracts, and provider-agnostic document
 - [docs/artist-schema.md](docs/artist-schema.md)
 - [docs/recording-schema.md](docs/recording-schema.md)
 - [docs/media-matching-schema.md](docs/media-matching-schema.md)
+- [docs/delete-semantics.md](docs/delete-semantics.md)
 
 Normalization and dedupe guidance is documented in [docs/schema-conventions.md](docs/schema-conventions.md), including strict vs loose keys, duplicate-avoidance lookup order, and iterative refinement during real ingestion.
+
+Delete rules, blocker vs owned-cleanup classification, and the join-table asymmetry reference are documented in [docs/delete-semantics.md](docs/delete-semantics.md).

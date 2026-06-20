@@ -1,8 +1,18 @@
-# Recording/Track Schema Design (Planned)
+# Recording/Track Schema Design
 
-This document captures the planned Trackstash schema changes for canonical recordings, release placements, and extensible source/provider links.
+This document captures the intended schema design for canonical recordings, release placements, and extensible source/provider links.
 
-Status: design only. This is not yet applied in `Initialize-TrackstashDatabase`.
+Status: **core tables partially implemented**. The `recording`, `recording_external_ref`, `recording_artist_credit`, `recording_relationship`, and `release_recording` tables are implemented in `src/TrackStash.Core.Sqlite/Migrations.cs` with a simplified column set. Many rich columns (duration_ms, bpm, key, genre, etc.) are not yet present. The embedding tables are replaced by the shared `embedding_document` table. The DDL skeleton at the bottom of this document reflects the original design intent and **does not match the actual migration**.
+
+Key differences from the actual migration:
+
+- Column names differ (`title_norm` in docs vs `normalized_name` in migration); many rich columns are not yet present.
+- `ON DELETE CASCADE` described here for `recording_relationship`, `release_recording`, `recording_external_ref`, and `recording_artist_credit` is **not present** in the actual migration.
+- `recording_artist_credit.artist_id` is described as nullable with `ON DELETE SET NULL`; the actual migration defines it as `NOT NULL` with no cascade.
+- `release_recording` in the docs has `ON DELETE CASCADE` on both FKs; in the actual migration both are bare `REFERENCES` (no cascade), making `release_recording` rows blockers for recording deletion.
+- The per-entity embedding tables are replaced by the shared `embedding_document` table.
+
+See [delete-semantics.md](delete-semantics.md) for the delete rules and full reconciliation note.
 
 Related documents:
 
@@ -175,6 +185,7 @@ Constraints and indexes:
 ## Beatport Mapping Notes
 
 Core recording fields:
+
 - `name` -> `title`
 - `mix_name` -> `mix_name`
 - `isrc` -> `isrc`
@@ -189,15 +200,18 @@ Core recording fields:
 - `image.uri` -> `image_uri`
 
 External link mapping:
+
 - Beatport ID and URL should be stored in `recording_external_ref` where `source = beatport`.
 - Provider-specific fields such as `price`, `exclusive`, `hype`, `sample_url`, `sale_type` go in `source_payload_json`.
 
 Artist credit mapping:
+
 - `artists` array maps to `recording_artist_credit` with role = `primary`.
 - `remixers` array maps to `recording_artist_credit` with role = `remixer` on a **separate recording** via `recording_relationship.remix_of`.
 - Featured artists in the artists array should be identified by role label when available; otherwise infer from credited name patterns.
 
 Release placement:
+
 - Track placement details (`number`, `catalog_number`, `publish_date`) snapshot into `release_recording`.
 
 ## Embedding Support

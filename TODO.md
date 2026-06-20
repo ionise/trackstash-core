@@ -118,12 +118,12 @@
 
 ### 8) Define entity deletion semantics
 
-- [ ] Document canonical delete rules for label, artist, release, and recording in shared core docs
-- [ ] Reconcile delete behavior described in schema docs with the current SQLite migration behavior
-- [ ] Classify dependencies as blocking references vs entity-owned cleanup rows
+- [x] Document canonical delete rules for label, artist, release, and recording in shared core docs
+- [x] Reconcile delete behavior described in schema docs with the current SQLite migration behavior
+- [x] Classify dependencies as blocking references vs entity-owned cleanup rows
+- [x] Decide join-table asymmetry rules, including release-side cleanup vs recording-side blockers for `release_recording`
 - [ ] Define shared result models for delete dependency analysis and dry-run reporting
 - [ ] Define shared core contracts for dependency analysis and transactional entity deletion
-- [ ] Decide join-table asymmetry rules, including release-side cleanup vs recording-side blockers for `release_recording`
 - [ ] Implement SQLite-backed dependency analysis for label, artist, release, and recording deletes
 - [ ] Implement SQLite-backed transactional delete orchestration for safe owned-row cleanup
 - [ ] Add integration tests for blocked deletes, dry-run analysis, and successful deletes

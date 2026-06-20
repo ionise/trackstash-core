@@ -1,8 +1,16 @@
-# Label Schema Design (Planned)
+# Label Schema Design
 
-This document captures the planned Trackstash schema changes for canonical labels, label source links, and optional label embedding storage.
+This document captures the intended schema design for canonical labels, label source links, and optional label embedding storage.
 
-Status: design only. This is not yet applied in `Initialize-TrackstashDatabase`.
+Status: **core tables partially implemented**. The `label`, `label_external_ref`, and `label_alias` tables are implemented in `src/TrackStash.Core.Sqlite/Migrations.cs` with a simplified column set. The embedding tables (`label_embedding_document`, `label_embedding`) are not implemented; embeddings use the shared `embedding_document` table instead. The DDL skeleton at the bottom of this document reflects the original design intent and **does not match the actual migration**.
+
+Key differences from the actual migration:
+
+- Column names differ (`canonical_name`/`canonical_name_norm` in docs vs `name`/`normalized_name` in migration).
+- `ON DELETE CASCADE` described here is **not present** in the actual migration, which uses bare `REFERENCES` (effectively `NO ACTION`).
+- The per-entity embedding tables are replaced by the shared `embedding_document` table.
+
+See [delete-semantics.md](delete-semantics.md) for the delete rules and full reconciliation note.
 
 Related documents:
 

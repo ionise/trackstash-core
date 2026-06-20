@@ -1,8 +1,17 @@
-# Release Schema Design (Planned)
+# Release Schema Design
 
-This document captures the planned Trackstash schema changes for canonical releases and extensible source/provider links.
+This document captures the intended schema design for canonical releases and extensible source/provider links.
 
-Status: design only. This is not yet applied in `Initialize-TrackstashDatabase`.
+Status: **core tables partially implemented**. The `release`, `release_external_ref`, `release_artist_credit`, and `release_label_link` tables are implemented in `src/TrackStash.Core.Sqlite/Migrations.cs` with a simplified column set. The `primary_label_id` column on `release` is **not present** in the actual migration; the label association is captured in `release_label_link` only. The embedding tables are replaced by the shared `embedding_document` table. The DDL skeleton at the bottom of this document reflects the original design intent and **does not match the actual migration**.
+
+Key differences from the actual migration:
+
+- Column names differ (`title_norm` in docs vs `normalized_name` in migration); many rich columns (bpm_min, bpm_max, catalog_number, etc.) are not yet present.
+- `ON DELETE CASCADE` and `ON DELETE RESTRICT` described here are **not present** in the actual migration.
+- `release_artist_credit.artist_id` is described as nullable with `ON DELETE SET NULL`; the actual migration defines it as `NOT NULL` with no cascade.
+- The per-entity embedding tables are replaced by the shared `embedding_document` table.
+
+See [delete-semantics.md](delete-semantics.md) for the delete rules and full reconciliation note.
 
 Related documents:
 

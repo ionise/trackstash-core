@@ -1,8 +1,17 @@
-# Artist Schema Design (Planned)
+# Artist Schema Design
 
-This document captures the planned Trackstash schema changes for canonical artists, artist relationships, and extensible source/provider links.
+This document captures the intended schema design for canonical artists, artist relationships, and extensible source/provider links.
 
-Status: design only. This is not yet applied in `Initialize-TrackstashDatabase`.
+Status: **core tables partially implemented**. The `artist`, `artist_external_ref`, and `artist_alias` tables are implemented in `src/TrackStash.Core.Sqlite/Migrations.cs` with a simplified column set. The `artist_relationship` table is **not implemented** (relationships are stored in the model layer only). The embedding tables are replaced by the shared `embedding_document` table. The DDL skeleton at the bottom of this document reflects the original design intent and **does not match the actual migration**.
+
+Key differences from the actual migration:
+
+- Column names differ (`display_name`/`display_name_norm` in docs vs `name`/`normalized_name` in migration).
+- `ON DELETE CASCADE` described here is **not present** in the actual migration.
+- `release_artist_credit.artist_id` and `recording_artist_credit.artist_id` are described as nullable with `ON DELETE SET NULL`; the actual migration defines both as `NOT NULL` with no cascade.
+- The per-entity embedding tables are replaced by the shared `embedding_document` table.
+
+See [delete-semantics.md](delete-semantics.md) for the delete rules and full reconciliation note.
 
 Related documents:
 
