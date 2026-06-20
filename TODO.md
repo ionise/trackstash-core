@@ -94,7 +94,19 @@
 - [ ] Add ambiguous match report export for manual review
 - [ ] Add commands: full ingest, incremental sync, rebuild embeddings, recompute matches
 
-### 8) Pilot then full rollout
+### 8) Define entity deletion semantics
+
+- [ ] Document canonical delete rules for label, artist, release, and recording in shared core docs
+- [ ] Reconcile delete behavior described in schema docs with the current SQLite migration behavior
+- [ ] Classify dependencies as blocking references vs entity-owned cleanup rows
+- [ ] Define shared result models for delete dependency analysis and dry-run reporting
+- [ ] Define shared core contracts for dependency analysis and transactional entity deletion
+- [ ] Decide join-table asymmetry rules, including release-side cleanup vs recording-side blockers for `release_recording`
+- [ ] Implement SQLite-backed dependency analysis for label, artist, release, and recording deletes
+- [ ] Implement SQLite-backed transactional delete orchestration for safe owned-row cleanup
+- [ ] Add integration tests for blocked deletes, dry-run analysis, and successful deletes
+
+### 9) Pilot then full rollout
 
 - [ ] Run pilot ingest on a curated sample containing collabs/remixes/compilations edge cases
 - [ ] Tune thresholds from pilot outcomes
