@@ -61,6 +61,26 @@
 
 **Goal:** Ingest Beatport labels/releases/artists/recordings into canonical tables, generate embeddings, and match local media files to canonical recordings.
 
+### Catalog vs Library terminology (working definition)
+
+- Catalog: canonical music knowledge (labels/artists/releases/recordings and external references), including items not owned locally.
+- Library: owned media-file inventory and extracted metadata for local files.
+- Keep these concepts separate in docs, contracts, and command surfaces.
+- Catalog workflows should remain independent of local file ownership state.
+
+### Embedding implementation focus (current phase)
+
+- Focus now: text embeddings for Catalog entities.
+- Audio embeddings are a later phase and should not block current Catalog text embedding delivery.
+
+### Audio embedding follow-up (future phase)
+
+- Canonical recording audio may be stored in cloud blob/object storage for backup and reproducible processing.
+- Audio embedding jobs should reference canonical audio locations (URI + content hash) rather than large inline payloads.
+- Re-embed policy should remain deterministic: regenerate on source hash change or model/version change.
+- GPU-heavy audio embedding execution is expected to run in cloud workers.
+- Worker topology may evolve to router + specialized workers (text vs audio) once multiple modalities are active.
+
 ### 1) Finalize schema decisions
 
 - [ ] Freeze normalization rules in `docs/schema-conventions.md` (`*_norm`, punctuation, whitespace, casing)
@@ -94,10 +114,11 @@
 
 ### 5) Implement embedding jobs
 
-- [ ] Build document text materialization for release/artist/recording/media_file
-- [ ] Generate MiniLM embeddings and persist with `model_name`, `model_version`, `dimensions`
+- [ ] Build document text materialization for release/artist/recording (Catalog-first scope)
+- [ ] Generate text embeddings and persist with `model_name`, `model_version`, `dimensions`
 - [ ] Skip unchanged rows via `document_hash`
 - [ ] Add re-embed command for model upgrades
+- [ ] Add optional cloud audio embedding pipeline (Library/media scope) using canonical blob/object references
 
 ### 6) Implement media-to-recording matching pipeline
 
@@ -153,3 +174,4 @@
 
 - Consider adding a lightweight core catalog registry interface for multi-catalog routing: callers provide `catalogName`, core resolves provider/backend/connection details.
 - Keep this optional and config-driven so single-catalog local workflows remain simple.
+- Add explicit Library module docs and commands as media scanning expands, keeping Catalog and Library responsibilities separate.

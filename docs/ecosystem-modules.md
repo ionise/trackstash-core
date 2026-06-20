@@ -12,6 +12,11 @@ Proposed umbrella home:
 - Treat database access as a provider boundary: SQLite is the default development backend, but catalog-facing code should depend on interfaces, not on SQLite APIs directly.
 - Allow future backends: another relational database should be a straightforward adapter swap; a document store such as Azure Cosmos DB should be possible via a dedicated adapter, not by leaking storage assumptions into the scanner.
 
+Terminology used in this repo:
+
+- Catalog: canonical music domain data (labels/artists/releases/recordings), including music not owned locally.
+- Library: owned media-file data (local file inventory, extracted metadata, fingerprints, and file-level lifecycle state).
+
 ## Current Modules
 
 ### `psMusicTagger`
@@ -96,6 +101,10 @@ Purpose:
 - Own canonical music entities: labels, releases, artists, recordings.
 - Own provider references, aliases, relationships, and embeddings.
 
+Terminology note:
+- `trackstash-catalog` is Catalog scope, not Library scope.
+- Catalog data may include recordings that are not present in local owned files.
+
 Responsibilities:
 - Ingest and normalize Beatport source data.
 - Persist canonical entities and external references.
@@ -115,6 +124,9 @@ Responsibilities:
 - Run deterministic matching strategies first, then embeddings and fuzzy ranking.
 - Persist best matches, candidate lists, scores, and evidence.
 - Support manual review and overrides.
+
+Boundary note:
+- `trackstash-match` is where Library files are linked to Catalog entities.
 
 ### `trackstash-tag`
 
