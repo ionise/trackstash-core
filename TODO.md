@@ -53,6 +53,7 @@
 - [x] Document relational backend assumptions that can be shared
 - [x] Document document-store-specific constraints for a future cloud backend
 - [x] Keep Cosmos-style layouts isolated from scanner concerns
+- [ ] Evaluate a core-level catalog registry abstraction (logical catalog name -> provider descriptor/connection) so callers can target catalogs without passing raw DB paths
 
 ---
 
@@ -147,3 +148,8 @@
 - [ ] Tune thresholds from pilot outcomes
 - [ ] Run full ingest + embedding backfill + matching
 - [ ] Validate tag writeback plan (`trackstash_recording_id` required, `trackstash_media_file_id` optional)
+
+## Future ideas (parking lot)
+
+- Consider adding a lightweight core catalog registry interface for multi-catalog routing: callers provide `catalogName`, core resolves provider/backend/connection details.
+- Keep this optional and config-driven so single-catalog local workflows remain simple.
