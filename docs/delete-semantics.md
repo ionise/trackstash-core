@@ -195,3 +195,23 @@ from the actual SQLite migration:
 The schema docs should be treated as design notes for future column enrichment, not as
 descriptions of the current database state. Delete logic and service contracts should be
 implemented against the actual migration, not the doc DDL skeletons.
+
+## Recycle Bin Requirement
+
+The delete feature should include a core recycle-bin requirement before any implementation
+is considered complete.
+
+Preferred behavior:
+
+- capture the deleted canonical entity and its owned cleanup rows in a tombstone/journal table
+- perform the journal write in the same transaction as the delete
+- keep the live delete semantics strict, so blockers still prevent unsafe removal
+- treat restore as a separate operation that validates current dependency state before replaying
+
+Restore limits:
+
+- restore should not silently recreate downstream match or embedding state; those are derived and should be rebuilt
+- restore should refuse if the entity id or required ownership edges now conflict with current live data
+- restore should respect the same blocker rules that apply to a live entity, unless the caller explicitly repairs dependencies first
+
+This requirement is intentionally a core contract item, not just a UI convenience feature.

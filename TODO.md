@@ -128,7 +128,17 @@
 - [ ] Implement SQLite-backed transactional delete orchestration for safe owned-row cleanup
 - [ ] Add integration tests for blocked deletes, dry-run analysis, and successful deletes
 
-### 9) Pilot then full rollout
+### 9) Add recycle-bin retention for deletes
+
+- [ ] Define a core recycle-bin requirement for canonical entity deletes before implementation begins
+- [ ] Decide which deleted rows are retained as tombstones versus fully purged later
+- [ ] Define restore prerequisites and limits for labels, artists, releases, and recordings
+- [ ] Add shared result models for recycle-bin capture and restore planning
+- [ ] Define shared core contracts for delete journaling, tombstone lookup, and restore orchestration
+- [ ] Implement SQLite-backed recycle-bin capture in the same transaction as delete
+- [ ] Add integration tests for retained delete records and restore safety rules
+
+### 10) Pilot then full rollout
 
 - [ ] Run pilot ingest on a curated sample containing collabs/remixes/compilations edge cases
 - [ ] Tune thresholds from pilot outcomes
