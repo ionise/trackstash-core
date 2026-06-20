@@ -7,6 +7,7 @@ internal static class Migrations
     public static IReadOnlyList<SchemaMigration> All { get; } =
     [
         new SchemaMigration(1, "initial-schema", InitialSchema),
+        new SchemaMigration(2, "embedding-work-item-queue", EmbeddingWorkItemQueue),
     ];
 
     private const string InitialSchema = """
@@ -241,5 +242,31 @@ internal static class Migrations
         CREATE INDEX IF NOT EXISTS idx_entity_tombstone_deleted_utc ON entity_tombstone (deleted_utc);
         CREATE INDEX IF NOT EXISTS idx_entity_tombstone_purge_after_utc ON entity_tombstone (purge_after_utc);
         CREATE INDEX IF NOT EXISTS idx_entity_tombstone_is_purged ON entity_tombstone (is_purged);
+        """;
+
+    private const string EmbeddingWorkItemQueue = """
+        CREATE TABLE IF NOT EXISTS embedding_work_item (
+            work_item_id       TEXT    NOT NULL PRIMARY KEY,
+            entity_id          TEXT    NOT NULL,
+            entity_type        TEXT    NOT NULL,
+            model_name         TEXT    NOT NULL,
+            model_version      TEXT    NOT NULL,
+            operation          TEXT    NOT NULL,
+            force_regenerate   INTEGER NOT NULL DEFAULT 0,
+            status             TEXT    NOT NULL,
+            attempt_count      INTEGER NOT NULL DEFAULT 0,
+            enqueued_utc       TEXT    NOT NULL,
+            next_attempt_utc   TEXT,
+            leased_until_utc   TEXT,
+            last_error         TEXT,
+            updated_utc        TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_embedding_work_item_status_next_attempt ON embedding_work_item (status, next_attempt_utc);
+        CREATE INDEX IF NOT EXISTS idx_embedding_work_item_entity_model ON embedding_work_item (entity_id, entity_type, model_name, model_version);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_embedding_work_item_active_unique
+            ON embedding_work_item (entity_id, entity_type, model_name, model_version)
+            WHERE status IN ('Pending', 'Processing');
         """;
 }
