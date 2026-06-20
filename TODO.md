@@ -81,6 +81,14 @@
 - GPU-heavy audio embedding execution is expected to run in cloud workers.
 - Worker topology may evolve to router + specialized workers (text vs audio) once multiple modalities are active.
 
+Future exploration note: backup + embedding lifecycle for Library media
+
+- Ingest to hot tier first, compute hashes/metadata, and run embedding jobs while blobs are warm.
+- After successful embedding and validation, transition canonical blobs to cold/archive tiers for long-term cost control.
+- On re-upload, dedupe by canonical content hash and keep existing blob when binary-equivalent.
+- If a re-upload is the same recording but higher quality, treat it as a candidate canonical replacement using a deterministic quality policy.
+- Prefer immutable blob keys by content hash plus a separate logical recording-to-canonical-blob mapping so upgrades are reversible and auditable.
+
 ### 1) Finalize schema decisions
 
 - [ ] Freeze normalization rules in `docs/schema-conventions.md` (`*_norm`, punctuation, whitespace, casing)
