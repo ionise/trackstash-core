@@ -178,6 +178,18 @@ Future exploration note: backup + embedding lifecycle for Library media
 - [ ] Run full ingest + embedding backfill + matching
 - [ ] Validate tag writeback plan (`trackstash_recording_id` required, `trackstash_media_file_id` optional)
 
+### 11) Add canonical image asset model
+
+- [ ] Define normalized schema for `media_asset` and `entity_image` (instead of multi-value image fields on entities)
+- [ ] Add storage model fields to support both DB BLOB and external URI-backed assets (`storage_kind`, `uri`)
+- [ ] Add checksum-based dedupe contract and indexes (`sha256`)
+- [ ] Define image role taxonomy and constraints (`logo`, `publicity`, `cover_front`, `cover_back`, etc.)
+- [ ] Define linking semantics for ordering and primary selection
+- [ ] Add optional release-context linkage for recording images (`context_release_id`)
+- [ ] Define fallback behavior: recording image falls back to parent release art when no context-specific recording image exists
+- [ ] Implement core contracts/repository methods and SQLite adapter support for image CRUD/read paths
+- [ ] Add migration and integration tests for dedupe, fallback behavior, and referential safety
+
 ## Future ideas (parking lot)
 
 - Consider adding a lightweight core catalog registry interface for multi-catalog routing: callers provide `catalogName`, core resolves provider/backend/connection details.

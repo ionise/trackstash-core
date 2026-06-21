@@ -19,3 +19,8 @@ Normalization and dedupe guidance is documented in [docs/schema-conventions.md](
 For caller-side artifact naming, `EntityNameNormalizer.NormalizeWithSlug(value)` returns a database-free normalized name and slug pair.
 
 Delete rules, blocker vs owned-cleanup classification, and the join-table asymmetry reference are documented in [docs/delete-semantics.md](docs/delete-semantics.md).
+
+## Roadmap Note
+
+Planned core enhancement: image support for canonical entities (label, artist, release, recording) using normalized asset/link tables.
+The intended direction is a `media_asset` + `entity_image` model with BLOB-first storage plus a storage-kind/URI path for external object storage, while keeping catalog callers on core contracts rather than direct database access.
