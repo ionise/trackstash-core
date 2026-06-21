@@ -12,6 +12,10 @@ public enum DuplicateResolutionAction
     CreateNewCanonicalEntity = 3,
 }
 
+public sealed record EntityIdentityNormalization(
+    string NormalizedName,
+    string Slug);
+
 public static partial class EntityNameNormalizer
 {
     private static readonly HashSet<string> LooseFillerTokens = new(StringComparer.Ordinal)
@@ -57,6 +61,16 @@ public static partial class EntityNameNormalizer
 
         var collapsed = MultiWhitespaceRegex().Replace(builder.ToString(), " ").Trim();
         return collapsed.Replace(" ", string.Empty, StringComparison.Ordinal);
+    }
+
+    public static EntityIdentityNormalization NormalizeWithSlug(string? value)
+    {
+        var normalizedName = NormalizeStrict(value);
+        if (string.IsNullOrWhiteSpace(normalizedName))
+            return new EntityIdentityNormalization(string.Empty, string.Empty);
+
+        var slug = BuildSlug(value);
+        return new EntityIdentityNormalization(normalizedName, slug);
     }
 
     public static string NormalizeLoose(string? value)
@@ -132,6 +146,39 @@ public static partial class EntityNameNormalizer
             .Trim()
             .Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .ToList();
+    }
+
+    private static string BuildSlug(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var canonical = FoldToCanonicalAscii(value).ToLowerInvariant();
+        var tokens = new List<string>();
+        var token = new StringBuilder(canonical.Length);
+
+        foreach (var ch in canonical)
+        {
+            if (char.IsLetterOrDigit(ch))
+            {
+                token.Append(ch);
+                continue;
+            }
+
+            if (IsStylisticSeparator(ch))
+                continue;
+
+            if (token.Length > 0)
+            {
+                tokens.Add(token.ToString());
+                token.Clear();
+            }
+        }
+
+        if (token.Length > 0)
+            tokens.Add(token.ToString());
+
+        return string.Join("-", tokens);
     }
 
     private static bool IsStylisticSeparator(char ch)

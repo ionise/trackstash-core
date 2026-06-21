@@ -145,6 +145,12 @@ Policy:
 
 For label-like punctuation variants, the preferred behavior is one canonical identity with aliases retained for source fidelity.
 
+Pure naming helper:
+
+- `trackstash-core` exposes a database-free helper via `EntityNameNormalizer.NormalizeWithSlug(value)`.
+- The helper returns both the strict normalized name and a deterministic slug for file names and other caller-owned identifiers.
+- Callers such as PowerShell or catalog-facing orchestration should use this helper before any commit/apply step when they need a predictable artifact name.
+
 ## Repository Responsibilities
 
 ### `ILabelRepository`

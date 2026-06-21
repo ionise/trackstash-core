@@ -19,6 +19,28 @@ public sealed class EntityNameNormalizerTests
     }
 
     [Theory]
+    [InlineData("Virelith Records", "virelithrecords", "virelith-records")]
+    [InlineData("Distinctive Records", "distinctiverecords", "distinctive-records")]
+    [InlineData("Distinct'ive Records", "distinctiverecords", "distinctive-records")]
+    [InlineData("En:Visiqn Recordings", "envisiqnrecordings", "envisiqn-recordings")]
+    public void NormalizeWithSlug_ReturnsStableNormalizedNameAndSlug(string value, string expectedNormalized, string expectedSlug)
+    {
+        var result = EntityNameNormalizer.NormalizeWithSlug(value);
+
+        Assert.Equal(expectedNormalized, result.NormalizedName);
+        Assert.Equal(expectedSlug, result.Slug);
+    }
+
+    [Fact]
+    public void NormalizeWithSlug_ReturnsEmptyValues_ForBlankInput()
+    {
+        var result = EntityNameNormalizer.NormalizeWithSlug(null);
+
+        Assert.Equal(string.Empty, result.NormalizedName);
+        Assert.Equal(string.Empty, result.Slug);
+    }
+
+    [Theory]
     [InlineData("Virelith Records", "virelith")]
     [InlineData("Virelith Recordings", "virelith")]
     [InlineData("Virelith Music", "virelith")]
