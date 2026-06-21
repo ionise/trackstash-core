@@ -25,6 +25,7 @@ Related documents:
 - One canonical Trackstash label record per real-world label.
 - Stable Trackstash label identity using a GUID.
 - Unlimited external provider links without adding new columns per provider.
+- Support parent/imprint/brand relationships between labels without collapsing them into aliases.
 - Keep core relational data separate from embedding/ML derived data.
 - Allow re-embedding and multi-model embeddings without data loss.
 
@@ -102,6 +103,64 @@ Constraints and indexes:
 - `FOREIGN KEY(label_id) REFERENCES label(label_id) ON DELETE CASCADE`
 - `UNIQUE(label_id, alias_name_norm)`
 - Index on `alias_name_norm`
+
+### 4) `label_relationship` (recommended)
+
+Purpose: model real label-to-label structure such as parent labels, imprints,
+sub-brands, regional brands, and distribution relationships.
+
+This is not an alias table. Use `label_alias` when two names refer to the same
+canonical label; use `label_relationship` when two distinct labels have a real
+business relationship.
+
+Suggested columns:
+
+- `label_relationship_id INTEGER PRIMARY KEY AUTOINCREMENT`
+- `parent_label_id TEXT NOT NULL`
+- `child_label_id TEXT NOT NULL`
+- `relationship_type TEXT NOT NULL`
+  - Examples: `parent_of`, `imprint_of`, `brand_of`, `distributed_by`, `regional_brand_of`, `catalog_brand_of`.
+- `role TEXT NULL`
+  - Optional human-readable role, such as `main label`, `dance imprint`, or `digital brand`.
+- `territory TEXT NULL`
+  - Optional territory or market scope, for example `worldwide`, `uk`, `us`, `eu`.
+- `genre TEXT NULL`
+  - Optional genre scope, for example `house`, `drum-and-bass`, `ambient`.
+- `effective_from_utc TEXT NULL`
+- `effective_to_utc TEXT NULL`
+- `source TEXT NULL`
+- `confidence REAL NULL`
+- `notes TEXT NULL`
+- `created_utc TEXT NOT NULL`
+- `updated_utc TEXT NOT NULL`
+
+Constraints and indexes:
+
+- `FOREIGN KEY(parent_label_id) REFERENCES label(label_id) ON DELETE RESTRICT`
+- `FOREIGN KEY(child_label_id) REFERENCES label(label_id) ON DELETE CASCADE`
+- `UNIQUE(parent_label_id, child_label_id, relationship_type)`
+- Index on `parent_label_id`
+- Index on `child_label_id`
+- Index on `(relationship_type, territory)`
+
+Usage guidance:
+
+- `parent_of` is the canonical structural relationship when one label owns or
+  oversees another.
+- `imprint_of` is the preferred relationship when the child is a branded sublabel.
+- `brand_of` is useful when two labels are distinct market-facing brands under
+  shared ownership.
+- `distributed_by` can capture a label that is represented by another label or
+  distributor in a territory or time period.
+- Sideways relationships should be explicit and directional; do not infer them
+  from aliases or from release links.
+
+Delete guidance:
+
+- Deleting a parent label should be blocked while child labels still reference it.
+- Deleting a child label should remove its relationship rows as owned cleanup.
+- The delete semantics document should treat this table as an asymmetrical join
+  structure once it is implemented.
 
 ## Linking From Existing Track Metadata
 

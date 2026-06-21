@@ -50,6 +50,11 @@ Blockers — must be cleared first:
 | --- | --- |
 | `release_label_link` | `label_id` |
 
+Prospective relationship rule once `label_relationship` exists:
+
+- deleting a parent label should be blocked while any child labels still reference it as `parent_label_id`
+- deleting a child label should remove its `label_relationship` rows as owned cleanup
+
 Owned cleanup — deleted automatically in the same transaction:
 
 | Table | Column |
