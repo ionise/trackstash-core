@@ -116,6 +116,31 @@ internal sealed class SqliteEntityDeleteService : IEntityDeleteService
         }
     }
 
+    public async ValueTask<int> DeleteOwnedRowsAsync(
+        string entityType,
+        string entityId,
+        CancellationToken cancellationToken = default)
+    {
+        var ownedCleanupTables = new List<OwnedCleanupTable>();
+        await AnalyzeEntityDependenciesAsync(
+            entityType,
+            entityId,
+            blockers: [],
+            ownedCleanupTables,
+            cancellationToken).ConfigureAwait(false);
+
+        var deleted = 0;
+        foreach (var table in ownedCleanupTables)
+        {
+            var deleteQuery = $"DELETE FROM {table.TableName} WHERE {table.ReferencingColumn} = @entityId";
+            using var deleteCommand = new SqliteCommand(deleteQuery, _connection) { Transaction = _transaction };
+            deleteCommand.Parameters.AddWithValue("@entityId", entityId);
+            deleted += await deleteCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return deleted;
+    }
+
     public async ValueTask<EntityTombstone?> GetTombstoneAsync(
         string entityType,
         string entityId,

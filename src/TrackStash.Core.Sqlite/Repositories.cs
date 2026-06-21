@@ -29,7 +29,8 @@ internal sealed class SqliteLabelRepository : ILabelRepository
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        return ReadLabel(reader);
+        var label = ReadLabel(reader);
+        return await PopulateLabelRelatedDataAsync(label, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<Label?> GetByExternalRefAsync(string source, string externalId, CancellationToken cancellationToken = default)
@@ -161,6 +162,55 @@ internal sealed class SqliteLabelRepository : ILabelRepository
         CreatedUtc = reader.IsDBNull(5) ? null : DateTimeOffset.Parse(reader.GetString(5)),
         UpdatedUtc = reader.IsDBNull(6) ? null : DateTimeOffset.Parse(reader.GetString(6)),
     };
+
+    private async ValueTask<Label> PopulateLabelRelatedDataAsync(Label label, CancellationToken cancellationToken)
+    {
+        var aliases = new List<EntityAlias>();
+        using (var cmd = _connection.CreateCommand())
+        {
+            cmd.Transaction = _transaction;
+            cmd.CommandText = "SELECT value, normalized_value, is_primary FROM label_alias WHERE label_id = @id";
+            cmd.Parameters.AddWithValue("@id", label.Id);
+
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                aliases.Add(new EntityAlias
+                {
+                    Value = reader.GetString(0),
+                    NormalizedValue = reader.IsDBNull(1) ? null : reader.GetString(1),
+                    IsPrimary = !reader.IsDBNull(2) && reader.GetInt32(2) == 1,
+                });
+            }
+        }
+
+        var refs = new List<EntityReference>();
+        using (var cmd = _connection.CreateCommand())
+        {
+            cmd.Transaction = _transaction;
+            cmd.CommandText = "SELECT source, external_id, is_primary, last_seen_utc, payload_json FROM label_external_ref WHERE label_id = @id";
+            cmd.Parameters.AddWithValue("@id", label.Id);
+
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                refs.Add(new EntityReference
+                {
+                    Source = reader.GetString(0),
+                    ExternalId = reader.GetString(1),
+                    IsPrimary = !reader.IsDBNull(2) && reader.GetInt32(2) == 1,
+                    LastSeenUtc = reader.IsDBNull(3) ? null : DateTimeOffset.Parse(reader.GetString(3)),
+                    PayloadJson = reader.IsDBNull(4) ? null : reader.GetString(4),
+                });
+            }
+        }
+
+        return label with
+        {
+            Aliases = aliases,
+            ExternalReferences = refs,
+        };
+    }
 }
 
 internal sealed class SqliteArtistRepository : IArtistRepository
@@ -189,7 +239,8 @@ internal sealed class SqliteArtistRepository : IArtistRepository
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        return ReadArtist(reader);
+        var artist = ReadArtist(reader);
+        return await PopulateArtistRelatedDataAsync(artist, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<Artist?> GetByExternalRefAsync(string source, string externalId, CancellationToken cancellationToken = default)
@@ -315,6 +366,55 @@ internal sealed class SqliteArtistRepository : IArtistRepository
         CreatedUtc = reader.IsDBNull(5) ? null : DateTimeOffset.Parse(reader.GetString(5)),
         UpdatedUtc = reader.IsDBNull(6) ? null : DateTimeOffset.Parse(reader.GetString(6)),
     };
+
+    private async ValueTask<Artist> PopulateArtistRelatedDataAsync(Artist artist, CancellationToken cancellationToken)
+    {
+        var aliases = new List<EntityAlias>();
+        using (var cmd = _connection.CreateCommand())
+        {
+            cmd.Transaction = _transaction;
+            cmd.CommandText = "SELECT value, normalized_value, is_primary FROM artist_alias WHERE artist_id = @id";
+            cmd.Parameters.AddWithValue("@id", artist.Id);
+
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                aliases.Add(new EntityAlias
+                {
+                    Value = reader.GetString(0),
+                    NormalizedValue = reader.IsDBNull(1) ? null : reader.GetString(1),
+                    IsPrimary = !reader.IsDBNull(2) && reader.GetInt32(2) == 1,
+                });
+            }
+        }
+
+        var refs = new List<EntityReference>();
+        using (var cmd = _connection.CreateCommand())
+        {
+            cmd.Transaction = _transaction;
+            cmd.CommandText = "SELECT source, external_id, is_primary, last_seen_utc, payload_json FROM artist_external_ref WHERE artist_id = @id";
+            cmd.Parameters.AddWithValue("@id", artist.Id);
+
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                refs.Add(new EntityReference
+                {
+                    Source = reader.GetString(0),
+                    ExternalId = reader.GetString(1),
+                    IsPrimary = !reader.IsDBNull(2) && reader.GetInt32(2) == 1,
+                    LastSeenUtc = reader.IsDBNull(3) ? null : DateTimeOffset.Parse(reader.GetString(3)),
+                    PayloadJson = reader.IsDBNull(4) ? null : reader.GetString(4),
+                });
+            }
+        }
+
+        return artist with
+        {
+            Aliases = aliases,
+            ExternalReferences = refs,
+        };
+    }
 }
 
 internal sealed class SqliteReleaseRepository : IReleaseRepository
@@ -343,7 +443,8 @@ internal sealed class SqliteReleaseRepository : IReleaseRepository
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        return ReadRelease(reader);
+        var release = ReadRelease(reader);
+        return await PopulateReleaseRelatedDataAsync(release, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<Release?> GetByExternalRefAsync(string source, string externalId, CancellationToken cancellationToken = default)
@@ -503,6 +604,75 @@ internal sealed class SqliteReleaseRepository : IReleaseRepository
         CreatedUtc = reader.IsDBNull(5) ? null : DateTimeOffset.Parse(reader.GetString(5)),
         UpdatedUtc = reader.IsDBNull(6) ? null : DateTimeOffset.Parse(reader.GetString(6)),
     };
+
+    private async ValueTask<Release> PopulateReleaseRelatedDataAsync(Release release, CancellationToken cancellationToken)
+    {
+        var refs = new List<EntityReference>();
+        using (var cmd = _connection.CreateCommand())
+        {
+            cmd.Transaction = _transaction;
+            cmd.CommandText = "SELECT source, external_id, is_primary, last_seen_utc, payload_json FROM release_external_ref WHERE release_id = @id";
+            cmd.Parameters.AddWithValue("@id", release.Id);
+
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                refs.Add(new EntityReference
+                {
+                    Source = reader.GetString(0),
+                    ExternalId = reader.GetString(1),
+                    IsPrimary = !reader.IsDBNull(2) && reader.GetInt32(2) == 1,
+                    LastSeenUtc = reader.IsDBNull(3) ? null : DateTimeOffset.Parse(reader.GetString(3)),
+                    PayloadJson = reader.IsDBNull(4) ? null : reader.GetString(4),
+                });
+            }
+        }
+
+        var credits = new List<ReleaseArtistCredit>();
+        using (var cmd = _connection.CreateCommand())
+        {
+            cmd.Transaction = _transaction;
+            cmd.CommandText = "SELECT artist_id, credit_name, position FROM release_artist_credit WHERE release_id = @id ORDER BY COALESCE(position, 999999)";
+            cmd.Parameters.AddWithValue("@id", release.Id);
+
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                credits.Add(new ReleaseArtistCredit
+                {
+                    ArtistId = reader.GetString(0),
+                    CreditName = reader.IsDBNull(1) ? null : reader.GetString(1),
+                    Position = reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                });
+            }
+        }
+
+        var labels = new List<ReleaseLabelLink>();
+        using (var cmd = _connection.CreateCommand())
+        {
+            cmd.Transaction = _transaction;
+            cmd.CommandText = "SELECT label_id, is_primary, role FROM release_label_link WHERE release_id = @id";
+            cmd.Parameters.AddWithValue("@id", release.Id);
+
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                labels.Add(new ReleaseLabelLink
+                {
+                    LabelId = reader.GetString(0),
+                    IsPrimary = !reader.IsDBNull(1) && reader.GetInt32(1) == 1,
+                    Role = reader.IsDBNull(2) ? null : reader.GetString(2),
+                });
+            }
+        }
+
+        return release with
+        {
+            ExternalReferences = refs,
+            ArtistCredits = credits,
+            LabelLinks = labels,
+        };
+    }
 }
 
 internal sealed class SqliteRecordingRepository : IRecordingRepository
@@ -531,7 +701,8 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        return ReadRecording(reader);
+        var recording = ReadRecording(reader);
+        return await PopulateRecordingRelatedDataAsync(recording, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<Recording?> GetByIsrcAsync(string isrc, CancellationToken cancellationToken = default)
@@ -741,6 +912,100 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
         CreatedUtc = reader.IsDBNull(7) ? null : DateTimeOffset.Parse(reader.GetString(7)),
         UpdatedUtc = reader.IsDBNull(8) ? null : DateTimeOffset.Parse(reader.GetString(8)),
     };
+
+    private async ValueTask<Recording> PopulateRecordingRelatedDataAsync(Recording recording, CancellationToken cancellationToken)
+    {
+        var refs = new List<EntityReference>();
+        using (var cmd = _connection.CreateCommand())
+        {
+            cmd.Transaction = _transaction;
+            cmd.CommandText = "SELECT source, external_id, is_primary, last_seen_utc, payload_json FROM recording_external_ref WHERE recording_id = @id";
+            cmd.Parameters.AddWithValue("@id", recording.Id);
+
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                refs.Add(new EntityReference
+                {
+                    Source = reader.GetString(0),
+                    ExternalId = reader.GetString(1),
+                    IsPrimary = !reader.IsDBNull(2) && reader.GetInt32(2) == 1,
+                    LastSeenUtc = reader.IsDBNull(3) ? null : DateTimeOffset.Parse(reader.GetString(3)),
+                    PayloadJson = reader.IsDBNull(4) ? null : reader.GetString(4),
+                });
+            }
+        }
+
+        var credits = new List<RecordingArtistCredit>();
+        using (var cmd = _connection.CreateCommand())
+        {
+            cmd.Transaction = _transaction;
+            cmd.CommandText = "SELECT artist_id, credit_name, role, position FROM recording_artist_credit WHERE recording_id = @id ORDER BY COALESCE(position, 999999)";
+            cmd.Parameters.AddWithValue("@id", recording.Id);
+
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                credits.Add(new RecordingArtistCredit
+                {
+                    ArtistId = reader.GetString(0),
+                    CreditName = reader.IsDBNull(1) ? null : reader.GetString(1),
+                    Role = reader.IsDBNull(2) ? null : reader.GetString(2),
+                    Position = reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                });
+            }
+        }
+
+        var releaseLinks = new List<RecordingReleaseLink>();
+        using (var cmd = _connection.CreateCommand())
+        {
+            cmd.Transaction = _transaction;
+            cmd.CommandText = "SELECT release_id, disc_number, track_number FROM release_recording WHERE recording_id = @id";
+            cmd.Parameters.AddWithValue("@id", recording.Id);
+
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                releaseLinks.Add(new RecordingReleaseLink
+                {
+                    ReleaseId = reader.GetString(0),
+                    DiscNumber = reader.IsDBNull(1) ? null : reader.GetInt32(1),
+                    TrackNumber = reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                });
+            }
+        }
+
+        var relationships = new List<RecordingRelationship>();
+        using (var cmd = _connection.CreateCommand())
+        {
+            cmd.Transaction = _transaction;
+            cmd.CommandText = "SELECT to_recording_id, relationship_type, source, confidence, notes, created_utc, updated_utc FROM recording_relationship WHERE from_recording_id = @id";
+            cmd.Parameters.AddWithValue("@id", recording.Id);
+
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                relationships.Add(new RecordingRelationship
+                {
+                    RelatedRecordingId = reader.GetString(0),
+                    RelationshipType = reader.GetString(1),
+                    Source = reader.IsDBNull(2) ? null : reader.GetString(2),
+                    Confidence = reader.IsDBNull(3) ? null : reader.GetDecimal(3),
+                    Notes = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    CreatedUtc = reader.IsDBNull(5) ? null : DateTimeOffset.Parse(reader.GetString(5)),
+                    UpdatedUtc = reader.IsDBNull(6) ? null : DateTimeOffset.Parse(reader.GetString(6)),
+                });
+            }
+        }
+
+        return recording with
+        {
+            ExternalReferences = refs,
+            ArtistCredits = credits,
+            ReleaseLinks = releaseLinks,
+            Relationships = relationships,
+        };
+    }
 }
 
 internal sealed class SqliteMediaFileRepository : IMediaFileRepository

@@ -262,6 +262,15 @@ public interface IEntityDeleteService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Deletes only owned child rows for an entity (aliases, external refs, links) without deleting the entity row.
+    /// Intended for replace-style upserts where child collections should be reset before re-applying.
+    /// </summary>
+    ValueTask<int> DeleteOwnedRowsAsync(
+        string entityType,
+        string entityId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Execute a safe delete if no blockers remain.
     /// Captures a tombstone to the recycle bin in the same transaction.
     /// </summary>

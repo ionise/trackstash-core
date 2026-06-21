@@ -16,6 +16,8 @@ public sealed class SqliteStorageProvider : IStorageProvider
             Mode = SqliteOpenMode.ReadWriteCreate,
             Cache = SqliteCacheMode.Shared,
             ForeignKeys = true,
+            // Allow transient writer locks to clear before failing commands.
+            DefaultTimeout = 30,
         }.ToString();
     }
 
