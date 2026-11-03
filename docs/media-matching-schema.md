@@ -158,24 +158,61 @@ Constraints and indexes:
 - `UNIQUE(media_file_id, recording_id)`
 - Index on `(media_file_id, rank)`
 
+## Identity Resolution Policy
+
+Agreed recommendations for future resolver/backfill work; these are not guarantees of the current scanner/admission implementation. Use the canonical [recording identity policy](recording-schema.md#recording-identity-policy), including separate identities for remasters.
+
+### Evidence and Precedence
+
+- A resolvable `trackstash_recording_id` tag is an explicit (hard) association, ahead of inferred matches. Validate it and follow known redirects. Unknown IDs, malformed IDs, and strong audio/version contradictions must produce a conflict for review rather than silently accepting or replacing the association.
+- Beatport IDs and ISRCs are optional corroborating evidence, not prerequisites. Account for incorrect or reused identifiers and conflicting master/version information.
+- Artist and title provide a useful starting point. Mix/version, artist credits, duration, and reliable audio evidence strengthen recording identity.
+- Label, catalog number, and album/release metadata strengthen release context and disambiguation, but differences may be legitimate when a recording appears on multiple releases.
+- Missing fields mean unknown, not disagreement. More independent, consistent evidence raises confidence; multiple fields copied from one provider are not independent confirmations.
+- Normalize spelling and punctuation for comparison, but preserve meaningful distinctions such as Radio Edit, Extended Mix, Instrumental, remix credits, and remaster year. Missing mix metadata does not imply Original Mix.
+- Format, bitrate, sample rate, and storage location describe a representation, not a recording identity.
+
+### Audio Evidence
+
+- Whole-file hashes establish identical bytes. A separately defined decoded-audio hash can establish identical decoded samples despite container/tag differences; record the decoding procedure and version.
+- Acoustic fingerprints can identify candidates when metadata is missing and compare lossy encodings, but are not proof of identical files or identical masters.
+- Evaluate alignment, duration, fingerprint coverage, and degeneracy as well as similarity. Edits and remasters may have very similar fingerprints.
+- Associate multiple fingerprint observations with a canonical recording rather than treating one fingerprint as its immutable identity.
+- Preserve each observation's source media-file ID, algorithm/version, generation date, duration/coverage, and trust/verification state.
+- Promote fingerprints only from trusted file-to-recording associations; do not let an uncertain association seed future automatic matches.
+- When audio cannot distinguish plausible original/remaster candidates, require version metadata or reviewed evidence.
+
+### Decisions and Backfill
+
+- Keep accepted links, review-required candidates, and unresolved files distinct. Do not force a link when evidence is insufficient.
+- Acceptance should consider both evidence strength and the margin over competing candidates. Calibrate thresholds using reviewed fixtures; do not treat illustrative scores below as established probabilities.
+- Persist supporting and contradictory evidence, provenance, resolver version, and manual decisions. Automated reruns must not silently overwrite a reviewed association.
+- Avoid chain-merging: A matching B and B matching C does not establish that all three share a recording identity. Check the entire proposed group for contradictions.
+- Backfill from existing metadata, reviewed provider resolutions, sidecars, and trusted fingerprints. Do not create one recording per file or blindly convert format-aware recording groups into recordings.
+- Start with a read-only candidate report covering proposed recordings, file links, release memberships, confidence/evidence, and conflicts. Pilot approved mappings on a database copy before live migration.
+- Generate and persist GUIDs when canonical identities are created; do not regenerate them on repeat imports or metadata changes.
+- Keep tag/sidecar writeback separate from backfill approval and database migration. Retired IDs require redirects so existing tags remain resolvable after merges.
+
 ## Matching Strategy Definitions
+
+The following scores are historical design examples, not calibrated acceptance thresholds. The evidence and contradiction rules above take precedence.
 
 ### ISRC Exact
 
 - **Condition**: File metadata has ISRC, recording has same ISRC.
-- **Confidence**: 0.99 (very high; ISRCs are internationally unique).
+- **Confidence**: illustrative 0.99; requires corroboration and conflict checks because real-world ISRC metadata can be incorrect or reused.
 - **Evidence**: `{"isrc_match": true, "isrc_value": "USRC17607839"}`
 
 ### ISRC via Beatport Lookup
 
 - **Condition**: File has no ISRC, but Beatport track with same title/artist has ISRC; recording links to that Beatport track via `recording_external_ref`.
-- **Confidence**: 0.95 (high; cross-verified with provider).
+- **Confidence**: illustrative 0.95; provider evidence still needs version/master and contradiction checks.
 - **Evidence**: `{"isrc_beatport_lookup": true, "beatport_track_id": 20918793}`
 
 ### AcoustID Exact
 
 - **Condition**: File fingerprint and recording fingerprint both via AcoustID, exact match.
-- **Confidence**: 0.90 (high; audio fingerprint is reliable but not perfect).
+- **Confidence**: illustrative 0.90 for audio similarity, not proof of the same master. Apply duration, coverage, and version checks, especially for remasters.
 - **Evidence**: `{"acousticid_match": true}`
 
 ### Duration + BPM Heuristic

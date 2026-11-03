@@ -31,6 +31,53 @@ Related documents:
 - Support rich artist credits (primary, featured, producer, remixer, co-producer).
 - Preserve provider-specific details without polluting canonical schema.
 
+## Recording Identity Policy
+
+Agreed direction (implementation and Library integration remain incomplete):
+
+- Use `recording`, not a separate competing `track` entity, for the abstract identity of a particular recording/master.
+- A recording can exist without any owned media files or known release placements, for example as a wishlist/catalog entry.
+- One recording can be represented by multiple media files and appear on multiple releases through `release_recording`.
+- Assign a GUID once, independently of paths, tags, provider IDs, fingerprints, and file hashes. Metadata corrections, file moves, and additional release placements must not regenerate it.
+- Encodings and locations (AIFF, FLAC, MP3, Dropbox, JetDrive, NAS) do not by themselves create distinct recordings.
+- Edits, remixes, and remasters are distinct recordings. A remaster receives its own GUID and may link to the earlier recording through `recording_relationship` with type `remaster_of`.
+- Similar fingerprints between an original and a remaster are evidence of related audio, not sufficient grounds to merge their identities.
+- When duplicate canonical records are merged, retain retired IDs as resolvable redirects to the survivor; never repurpose an ID. Redirect persistence and resolution still need implementation.
+
+The canonical core/catalog model is distinct from the scanner's derived `recording_group` model. A format-aware group is matching evidence, not automatically a durable recording identity.
+
+### Portable Recording Identifier
+
+- Proposed custom tag: `trackstash_recording_id`, containing the canonical recording GUID.
+- Optional `trackstash_media_file_id` identifies the individual file record, not the recording.
+- Carry the recording ID into release sidecars as well as embedded tags; existing sidecar `localFiles[].mediaFileId` values are not recording IDs.
+- Preserve the recording ID through copying, transcoding, and organization when the output still represents the same recording/master.
+- Resolve and validate an embedded ID before using it as an explicit match assertion. Unknown IDs and contradictions require visible diagnostics, not silent reassignment.
+
+These are writeback requirements, not a claim that current admission scripts implement them. Format-specific tag mappings belong in the tagging layer. GUID serialization also needs reconciliation before rollout: shared conventions describe hyphenated GUIDs, while `EntityId.New()` currently emits 32-character unhyphenated GUIDs and the CSV importer emits hyphenated GUIDs.
+
+### Remaster and Release Dates
+
+Keep three meanings separate:
+
+1. Original recording's first-release date.
+2. This remaster's first-release date.
+3. Date of the particular release represented by a file, such as a later compilation.
+
+Store release-specific dates with release placements and retain evidence linking a first-release date to its source release. Canonical support for the separate original/remaster date meanings still needs schema and service design.
+
+Tagging guidance:
+
+- Prefer standard date tags where their meanings fit. In ID3v2.4, `TDOR` means original release time and `TDRL` means release time.
+- `TDRC` means recording time, not release time in the specification. Some applications use it as their ordinary date/year field; inspect existing reader/writer conventions before mapping or changing it.
+- For FLAC/Vorbis, `DATE` and `ORIGINALDATE` are common release/original-release conventions, with application-specific interoperability.
+- There is no widely interoperable dedicated tag for a remaster's first-release date when it differs from the represented release date. Keep that distinction in the catalog; use a documented custom field if writeback requires it.
+- Preserve official remaster designations in titles/version metadata. Do not invent a remaster year from an unspecified "Remastered" description.
+- Preserve date precision (`2020`, `2020-06`, or `2020-06-12`), provenance, and unknown values. Never infer release dates from file, purchase, admission, or scan timestamps.
+- Tag writeback changes file hashes: perform it separately from identity resolution, then refresh file inventory and backup verification state.
+
+See [media-matching-schema.md](media-matching-schema.md#identity-resolution-policy) for evidence handling and migration safeguards.
+
 ## Canonical Recording Model
 
 ### 1) `recording`
