@@ -12,6 +12,16 @@ Key differences from the actual migration:
 
 See [delete-semantics.md](delete-semantics.md) for the delete rules and full reconciliation note.
 
+## Implemented Query and Conditional-update Contracts
+
+[LabelQuery, LabelPage, and LabelUpdate](../src/TrackStash.Core/Storage/LabelQueries.cs) and [ILabelRepository](../src/TrackStash.Core/Storage/Contracts.cs) provide paged candidate queries, create-only insertion, and atomic expected-version updates. Name/provider matches can be ambiguous and are not unique-identity constraints. Legacy single-result lookups/upserts retain their existing behavior.
+
+SQLite migration 3 adds `label.version`, backfills it, and installs triggers for scalar label changes and owned alias/reference changes. Tokens are opaque, persisted, transactionally rolled back, and refreshed on insertion/restore, not derived from timestamps or incremented from caller input. Legacy unconditional writers invalidate read tokens without becoming conditional writers themselves. Child changes do not necessarily update the label's `updated_utc`.
+
+The adapter normalizes actual name/alias text for substring search using the shared normalizer, including aliases with null normalized values. It executes filtered count and page queries in the same unit of work and returns lightweight list items without child hydration. Conditional edits only set supplied name/sort-name fields and server-owned normalization/update time; they preserve provider payloads and children.
+
+Other adapters must preserve these contract semantics and provide equivalent invalidation for all supported write paths; SQLite triggers are an implementation detail. Migrate existing catalogs explicitly using bootstrap before running code that reads label versions. See the [catalog foundation contract](../../trackstash-catalog/docs/api-design.md#implemented-foundation) for validation, sorting, paging, version scope, and application projections.
+
 Related documents:
 
 - [release-schema.md](release-schema.md) for release-domain tables.

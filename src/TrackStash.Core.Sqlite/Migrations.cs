@@ -8,7 +8,50 @@ internal static class Migrations
     [
         new SchemaMigration(1, "initial-schema", InitialSchema),
         new SchemaMigration(2, "embedding-work-item-queue", EmbeddingWorkItemQueue),
+        new SchemaMigration(3, "label-aggregate-version", LabelAggregateVersion),
     ];
+
+    private const string LabelAggregateVersion = """
+        ALTER TABLE label ADD COLUMN version TEXT NOT NULL DEFAULT '';
+        UPDATE label SET version = lower(hex(randomblob(16)));
+
+        CREATE TRIGGER label_version_insert AFTER INSERT ON label
+        BEGIN
+            UPDATE label SET version = lower(hex(randomblob(16))) WHERE label_id = NEW.label_id;
+        END;
+
+        CREATE TRIGGER label_version_update
+        AFTER UPDATE OF label_id, name, normalized_name, sort_name, source_payload_json, created_utc, updated_utc ON label
+        BEGIN
+            UPDATE label SET version = lower(hex(randomblob(16))) WHERE label_id = NEW.label_id;
+        END;
+
+        CREATE TRIGGER label_alias_version_insert AFTER INSERT ON label_alias
+        BEGIN
+            UPDATE label SET version = lower(hex(randomblob(16))) WHERE label_id = NEW.label_id;
+        END;
+        CREATE TRIGGER label_alias_version_update AFTER UPDATE ON label_alias
+        BEGIN
+            UPDATE label SET version = lower(hex(randomblob(16))) WHERE label_id IN (OLD.label_id, NEW.label_id);
+        END;
+        CREATE TRIGGER label_alias_version_delete AFTER DELETE ON label_alias
+        BEGIN
+            UPDATE label SET version = lower(hex(randomblob(16))) WHERE label_id = OLD.label_id;
+        END;
+
+        CREATE TRIGGER label_ref_version_insert AFTER INSERT ON label_external_ref
+        BEGIN
+            UPDATE label SET version = lower(hex(randomblob(16))) WHERE label_id = NEW.label_id;
+        END;
+        CREATE TRIGGER label_ref_version_update AFTER UPDATE ON label_external_ref
+        BEGIN
+            UPDATE label SET version = lower(hex(randomblob(16))) WHERE label_id IN (OLD.label_id, NEW.label_id);
+        END;
+        CREATE TRIGGER label_ref_version_delete AFTER DELETE ON label_external_ref
+        BEGIN
+            UPDATE label SET version = lower(hex(randomblob(16))) WHERE label_id = OLD.label_id;
+        END;
+        """;
 
     private const string InitialSchema = """
         CREATE TABLE IF NOT EXISTS label (

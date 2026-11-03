@@ -51,6 +51,12 @@ public interface IMigrationRunner
 
 public interface ILabelRepository
 {
+    ValueTask<LabelPage> QueryAsync(LabelQuery query, CancellationToken cancellationToken = default);
+
+    ValueTask<bool> TryCreateAsync(Label label, CancellationToken cancellationToken = default);
+
+    ValueTask<LabelUpdateResult> UpdateAsync(string labelId, string expectedVersion, LabelUpdate update, CancellationToken cancellationToken = default);
+
     ValueTask<Label?> GetByIdAsync(string labelId, CancellationToken cancellationToken = default);
 
     ValueTask<Label?> GetByExternalRefAsync(string source, string externalId, CancellationToken cancellationToken = default);

@@ -3,7 +3,7 @@ using TrackStash.Core.Storage;
 
 namespace TrackStash.Core.Sqlite;
 
-internal sealed class SqliteLabelRepository : ILabelRepository
+internal sealed partial class SqliteLabelRepository : ILabelRepository
 {
     private readonly SqliteConnection _connection;
     private readonly SqliteTransaction _transaction;
@@ -19,7 +19,7 @@ internal sealed class SqliteLabelRepository : ILabelRepository
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = _transaction;
         cmd.CommandText = """
-            SELECT label_id, name, normalized_name, sort_name, source_payload_json, created_utc, updated_utc
+            SELECT label_id, name, normalized_name, sort_name, source_payload_json, created_utc, updated_utc, version
             FROM label
             WHERE label_id = @labelId
             """;
@@ -30,6 +30,7 @@ internal sealed class SqliteLabelRepository : ILabelRepository
             return null;
 
         var label = ReadLabel(reader);
+        await reader.DisposeAsync().ConfigureAwait(false);
         return await PopulateLabelRelatedDataAsync(label, cancellationToken).ConfigureAwait(false);
     }
 
@@ -38,7 +39,7 @@ internal sealed class SqliteLabelRepository : ILabelRepository
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = _transaction;
         cmd.CommandText = """
-            SELECT l.label_id, l.name, l.normalized_name, l.sort_name, l.source_payload_json, l.created_utc, l.updated_utc
+            SELECT l.label_id, l.name, l.normalized_name, l.sort_name, l.source_payload_json, l.created_utc, l.updated_utc, l.version
             FROM label l
             JOIN label_external_ref r ON r.label_id = l.label_id
             WHERE r.source = @source AND r.external_id = @externalId
@@ -59,7 +60,7 @@ internal sealed class SqliteLabelRepository : ILabelRepository
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = _transaction;
         cmd.CommandText = """
-            SELECT label_id, name, normalized_name, sort_name, source_payload_json, created_utc, updated_utc
+            SELECT label_id, name, normalized_name, sort_name, source_payload_json, created_utc, updated_utc, version
             FROM label
             WHERE normalized_name = @normalizedName
             LIMIT 1
@@ -75,17 +76,30 @@ internal sealed class SqliteLabelRepository : ILabelRepository
 
     public async ValueTask UpsertAsync(Label label, CancellationToken cancellationToken = default)
     {
+        await WriteLabelAsync(label, createOnly: false, cancellationToken).ConfigureAwait(false);
+    }
+
+    public ValueTask<bool> TryCreateAsync(Label label, CancellationToken cancellationToken = default)
+        => WriteLabelAsync(label, createOnly: true, cancellationToken);
+
+    private async ValueTask<bool> WriteLabelAsync(Label label, bool createOnly, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+        ArgumentException.ThrowIfNullOrWhiteSpace(label.Id);
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = _transaction;
-        cmd.CommandText = """
-            INSERT INTO label (label_id, name, normalized_name, sort_name, source_payload_json, created_utc, updated_utc)
-            VALUES (@id, @name, @normalizedName, @sortName, @sourcePayloadJson, @createdUtc, @updatedUtc)
+        var conflictAction = createOnly ? "ON CONFLICT (label_id) DO NOTHING" : """
             ON CONFLICT (label_id) DO UPDATE SET
                 name = excluded.name,
                 normalized_name = excluded.normalized_name,
                 sort_name = excluded.sort_name,
                 source_payload_json = excluded.source_payload_json,
                 updated_utc = excluded.updated_utc
+            """;
+        cmd.CommandText = $"""
+            INSERT INTO label (label_id, name, normalized_name, sort_name, source_payload_json, created_utc, updated_utc)
+            VALUES (@id, @name, @normalizedName, @sortName, @sourcePayloadJson, @createdUtc, @updatedUtc)
+            {conflictAction}
             """;
         cmd.Parameters.AddWithValue("@id", label.Id);
         cmd.Parameters.AddWithValue("@name", label.Name ?? (object)DBNull.Value);
@@ -95,13 +109,15 @@ internal sealed class SqliteLabelRepository : ILabelRepository
         cmd.Parameters.AddWithValue("@createdUtc", label.CreatedUtc?.ToString("O") ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue("@updatedUtc", label.UpdatedUtc?.ToString("O") ?? (object)DBNull.Value);
 
-        await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        if (await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) == 0)
+            return false;
 
         foreach (var externalRef in label.ExternalReferences)
             await UpsertExternalRefAsync(label.Id, externalRef, cancellationToken).ConfigureAwait(false);
 
         foreach (var alias in label.Aliases)
             await UpsertAliasAsync(label.Id, alias, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     private async ValueTask UpsertExternalRefAsync(string labelId, EntityReference externalRef, CancellationToken cancellationToken)
@@ -161,6 +177,7 @@ internal sealed class SqliteLabelRepository : ILabelRepository
         SourcePayloadJson = reader.IsDBNull(4) ? null : reader.GetString(4),
         CreatedUtc = reader.IsDBNull(5) ? null : DateTimeOffset.Parse(reader.GetString(5)),
         UpdatedUtc = reader.IsDBNull(6) ? null : DateTimeOffset.Parse(reader.GetString(6)),
+        Version = reader.GetString(7),
     };
 
     private async ValueTask<Label> PopulateLabelRelatedDataAsync(Label label, CancellationToken cancellationToken)
