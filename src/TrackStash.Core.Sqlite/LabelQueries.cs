@@ -60,6 +60,7 @@ internal sealed partial class SqliteLabelRepository
         ArgumentNullException.ThrowIfNull(update);
         update.Validate();
         await RejectRetiredAsync(labelId, cancellationToken).ConfigureAwait(false);
+        var before = update.SetProfile ? await ReadProfileAsync(labelId, cancellationToken).ConfigureAwait(false) : null;
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = _transaction;
         cmd.CommandText = """
@@ -78,10 +79,30 @@ internal sealed partial class SqliteLabelRepository
         cmd.Parameters.AddWithValue("@setSortName", update.SetSortName);
         cmd.Parameters.AddWithValue("@sortName", (object?)update.SortName ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@updated", DateTimeOffset.UtcNow.ToString("O"));
-        var affected = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        var label = await GetByIdAsync(labelId, cancellationToken).ConfigureAwait(false);
-        return affected == 1
-            ? new LabelUpdateResult(LabelUpdateStatus.Updated, label)
-            : new LabelUpdateResult(label is null ? LabelUpdateStatus.NotFound : LabelUpdateStatus.Stale);
+        using var savepoint = _connection.CreateCommand();
+        savepoint.Transaction = _transaction;
+        savepoint.CommandText = "SAVEPOINT label_update";
+        await savepoint.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var affected = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            if (affected == 1 && update.SetProfile)
+            {
+                await WriteProfileAsync(labelId, update.Profile!, cancellationToken).ConfigureAwait(false);
+                await RecordProfileRevisionAsync(labelId, before!, update.Profile!, cancellationToken).ConfigureAwait(false);
+            }
+            var label = await GetByIdAsync(labelId, cancellationToken).ConfigureAwait(false);
+            savepoint.CommandText = "RELEASE label_update";
+            await savepoint.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            return affected == 1
+                ? new LabelUpdateResult(LabelUpdateStatus.Updated, label)
+                : new LabelUpdateResult(label is null ? LabelUpdateStatus.NotFound : LabelUpdateStatus.Stale);
+        }
+        catch
+        {
+            savepoint.CommandText = "ROLLBACK TO label_update; RELEASE label_update";
+            await savepoint.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
     }
 }

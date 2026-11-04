@@ -31,7 +31,8 @@ internal sealed partial class SqliteLabelRepository : ILabelRepository
 
         var label = ReadLabel(reader);
         await reader.DisposeAsync().ConfigureAwait(false);
-        return await PopulateLabelRelatedDataAsync(label, cancellationToken).ConfigureAwait(false);
+        var hydrated = await PopulateLabelRelatedDataAsync(label, cancellationToken).ConfigureAwait(false);
+        return hydrated with { Profile = await ReadProfileAsync(labelId, cancellationToken).ConfigureAwait(false) };
     }
 
     public async ValueTask<Label?> GetByExternalRefAsync(string source, string externalId, CancellationToken cancellationToken = default)

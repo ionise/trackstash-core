@@ -41,15 +41,23 @@ public sealed record LabelUpdate
     public string? Name { get; init; }
     public bool SetSortName { get; init; }
     public string? SortName { get; init; }
+    public bool SetProfile { get; init; }
+    public LabelProfile? Profile { get; init; }
 
     public void Validate()
     {
-        if (!SetName && !SetSortName)
+        if (!SetName && !SetSortName && !SetProfile)
             throw new ArgumentException("At least one label field must be supplied.");
         if (SetName && string.IsNullOrWhiteSpace(Name))
             throw new ArgumentException("Name cannot be null or blank.", nameof(Name));
         if ((!SetName && Name is not null) || (!SetSortName && SortName is not null))
             throw new ArgumentException("A field value requires its corresponding Set flag.");
+        if (SetProfile)
+        {
+            ArgumentNullException.ThrowIfNull(Profile);
+            Profile.Validate();
+        }
+        else if (Profile is not null) throw new ArgumentException("Profile requires SetProfile.", nameof(Profile));
     }
 }
 

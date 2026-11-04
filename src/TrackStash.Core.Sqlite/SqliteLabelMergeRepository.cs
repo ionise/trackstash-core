@@ -10,7 +10,7 @@ namespace TrackStash.Core.Sqlite;
 internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, SqliteTransaction transaction) : ILabelMergeRepository
 {
     private readonly SqliteLabelRepository _labels = new(connection, transaction);
-    private const int PlanFormatVersion = 1;
+    private const int PlanFormatVersion = 2;
     private sealed record Plan(Label Survivor, Label Retired, Label Combined, MergeReleaseLink[] Links,
         Dictionary<string, List<Dictionary<string, object?>>> Rows, string[] Blockers)
     {
@@ -33,7 +33,9 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
             plan.Links, plan.Blockers,
             ["The retired ID will redirect permanently. This operation has no automatic undo.",
              "Survivor name and sort name are retained; transferred aliases are non-primary.",
-             "Operator attribution is unverified; the API key represents a shared local credential."]);
+             "Operator attribution is unverified; the API key represents a shared local credential.",
+             "Compatible profile fields and links are combined; conflicting profile values block apply. Personal favourites are combined."],
+            Profile: plan.Combined.Profile);
         await ExecuteAsync("""
             INSERT INTO label_merge_operation(operation_id, survivor_id, retired_id, version, expires_utc, state_hash, preview_json)
             VALUES (@op, @s, @r, @version, @expires, @hash, @preview)
@@ -82,6 +84,13 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
             await ExecuteAsync("DELETE FROM label_alias WHERE label_id IN (@s, @r); DELETE FROM label_external_ref WHERE label_id IN (@s, @r);",
                 cancellationToken, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
             await _labels.UpsertAsync(plan.Combined with { UpdatedUtc = now }, cancellationToken).ConfigureAwait(false);
+            await _labels.WriteProfileAsync(survivorId, plan.Combined.Profile, cancellationToken).ConfigureAwait(false);
+            await ExecuteAsync("""
+                DELETE FROM label_web_link WHERE label_id=@r;
+                DELETE FROM label_profile WHERE label_id=@r;
+                UPDATE label_profile_revision SET label_id=@s WHERE label_id=@r;
+                UPDATE label_observation SET label_id=@s WHERE label_id=@r;
+                """, cancellationToken, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
             await ExecuteAsync("DELETE FROM release_label_link WHERE label_id IN (@s, @r)", cancellationToken,
                 ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
             foreach (var link in plan.Links)
@@ -148,6 +157,9 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
                 ct, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
         rows["retired_label"] = await RowsAsync("SELECT * FROM retired_label WHERE canonical_id IN (@s, @r) ORDER BY retired_id",
             ct, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
+        foreach (var table in new[] { "label_profile", "label_web_link", "label_profile_revision", "label_observation" })
+            rows[table] = await RowsAsync($"SELECT * FROM {table} WHERE label_id IN (@s,@r) ORDER BY 1,2",
+                ct, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
         foreach (var table in new[] { "embedding_document", "embedding_work_item" })
             rows[table] = await RowsAsync($"SELECT * FROM {table} WHERE lower(entity_type) = 'label' AND entity_id IN (@s, @r) ORDER BY 1, 2, 3, 4",
                 ct, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
@@ -202,6 +214,7 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
             NormalizedName = EntityNameNormalizer.NormalizeStrict(survivor.Name),
             Aliases = aliases.Values.OrderBy(a => a.Value, StringComparer.Ordinal).ToArray(),
             ExternalReferences = references,
+            Profile = CombineProfiles(survivor.Profile, retired.Profile, blockers),
         }, links.ToArray(), rows, blockers.ToArray());
     }
 
@@ -212,7 +225,8 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
         foreach (var tableRow in tables)
         {
             var table = (string)tableRow["name"]!;
-            if (table is "label_alias" or "label_external_ref" or "release_label_link" or "retired_label") continue;
+            if (table is "label_alias" or "label_external_ref" or "release_label_link" or "retired_label"
+                or "label_profile" or "label_web_link" or "label_profile_revision" or "label_observation") continue;
             var foreignKeys = await RowsAsync($"PRAGMA foreign_key_list({Quote(table)})", ct).ConfigureAwait(false);
             foreach (var fk in foreignKeys.Where(f => (string?)f["table"] == "label"))
             {
@@ -223,7 +237,50 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
                 rows[$"unsupported:{table}:{column}"] = dependencies;
                 blockers.Add($"Unsupported label dependency ({dependencies.Count} rows). This storage schema needs a merge policy before applying.");
             }
+
         }
+    }
+
+    private static LabelProfile CombineProfiles(LabelProfile survivor, LabelProfile retired, List<string> blockers)
+    {
+        string? Combine(string? kept, string? moved, string field)
+        {
+            if (kept is not null && moved is not null && kept != moved)
+                blockers.Add($"Profile {field} differs. Review and reconcile both labels before merging.");
+            return kept ?? moved;
+        }
+        var links = survivor.Links.ToDictionary(l => l.Url, StringComparer.Ordinal);
+        foreach (var link in retired.Links)
+        {
+            if (!links.TryGetValue(link.Url, out var existing)) links.Add(link.Url, link);
+            else
+            {
+                if (existing.Kind != link.Kind) blockers.Add($"Link {link.Url} has conflicting kinds.");
+                links[link.Url] = existing with
+                {
+                    Title = Combine(existing.Title, link.Title, "link title"),
+                    SourceUrl = Combine(existing.SourceUrl, link.SourceUrl, "link source"),
+                };
+            }
+        }
+        if (links.Count > LabelProfile.MaximumLinks)
+            blockers.Add($"Combined profile exceeds the {LabelProfile.MaximumLinks}-link limit. Review links before merging.");
+        if (survivor.FoundedYear is not null && retired.FoundedYear is not null && survivor.FoundedYear != retired.FoundedYear)
+            blockers.Add("Profile founded year differs. Review and reconcile both labels before merging.");
+        return new()
+        {
+            Description = Combine(survivor.Description, retired.Description, "description"),
+            CountryCode = Combine(survivor.CountryCode, retired.CountryCode, "country"),
+            City = Combine(survivor.City, retired.City, "city"),
+            FoundedYear = survivor.FoundedYear ?? retired.FoundedYear,
+            LifecycleStatus = Combine(survivor.LifecycleStatus == "unknown" ? null : survivor.LifecycleStatus,
+                retired.LifecycleStatus == "unknown" ? null : retired.LifecycleStatus, "lifecycle status") ?? "unknown",
+            Notes = Combine(survivor.Notes, retired.Notes, "notes"),
+            Favourite = survivor.Favourite || retired.Favourite,
+            ReviewStatus = Combine(survivor.ReviewStatus == "unreviewed" ? null : survivor.ReviewStatus,
+                retired.ReviewStatus == "unreviewed" ? null : retired.ReviewStatus, "review status") ?? "unreviewed",
+            Links = links.Values.OrderBy(l => l.Url, StringComparer.Ordinal).ToArray(),
+        };
     }
 
     private async Task<List<Dictionary<string, object?>>> RowsAsync(string sql, CancellationToken ct, params (string Name, object? Value)[] parameters)

@@ -18,9 +18,27 @@ See [delete-semantics.md](delete-semantics.md) for the delete rules and full rec
 
 SQLite migration 3 adds `label.version`, backfills it, and installs triggers for scalar label changes and owned alias/reference changes. Tokens are opaque, persisted, transactionally rolled back, and refreshed on insertion/restore, not derived from timestamps or incremented from caller input. Legacy unconditional writers invalidate read tokens without becoming conditional writers themselves. Child changes do not necessarily update the label's `updated_utc`.
 
-The adapter normalizes actual name/alias text for substring search using the shared normalizer, including aliases with null normalized values. It executes filtered count and page queries in the same unit of work and returns lightweight list items without child hydration. Conditional edits only set supplied name/sort-name fields and server-owned normalization/update time; they preserve provider payloads and children.
+The adapter normalizes actual name/alias text for substring search using the shared normalizer, including aliases with null normalized values. It executes filtered count and page queries in the same unit of work and returns lightweight list items without child hydration. Conditional edits only set supplied fields and server-owned normalization/update time; they preserve provider payloads and identity children. A supplied profile replaces its complete editable metadata, not aliases or provider references.
 
 Other adapters must preserve these contract semantics and provide equivalent invalidation for all supported write paths; SQLite triggers are an implementation detail. Migrate existing catalogs explicitly using bootstrap before running code that reads label versions. See the [catalog foundation contract](../../trackstash-catalog/docs/api-design.md#implemented-foundation) for validation, sorting, paging, version scope, and application projections.
+
+## Manual Profiles and Future Enrichment Foundation
+
+Migration 5 adds a separate `label_profile` and `label_web_link` collection, exposed by [LabelProfile](../src/TrackStash.Core/Storage/LabelProfiles.cs). It does not rewrite existing label rows or provider identities. Missing profiles read as empty metadata: unknown lifecycle, unreviewed status, not favourite, and no links.
+
+Supported conditional edits cover description, two-letter uppercase country-code format (not ISO membership verification), city, founded year, lifecycle (`unknown`, `active`, `inactive`, `closed`), personal notes, favourite, review status (`unreviewed`, `in_progress`, `reviewed`), and typed HTTP(S) web links. Links are exact-URL unique, at most 100, with optional title and source URL. Website links are not verified identity references: adding a Discogs URL does not populate `label_external_ref`. Existing unconditional imports/upserts deliberately preserve curated profiles; use `LabelUpdate.SetProfile` with the original aggregate token to replace them.
+
+Each successful explicit profile edit records immutable before/after JSON in `label_profile_revision`, with original label ID, time, and actor `manual` (method attribution, not an authenticated individual). Profiles, links, revisions, observations, artwork, and both relationship endpoints invalidate aggregate versions; all new tables reject retired IDs. Safe deletion blocks metadata-bearing labels until complete relational snapshot/restore semantics exist.
+
+Schema-only foundations, with no public writers or GUI management yet:
+
+- `label_observation`: field/value JSON, provider/source identity and URL, retrieval time, attribution, licence, retention deadline, and reviewed decision. Future source providers should submit observations for review rather than silently overwrite canonical metadata.
+- `label_artwork`: local uploaded content BLOB, media type/hash, source URL, attribution, and required usage rights. No remote image retrieval, upload, or serving is implemented.
+- `label_relationship`: distinct existing label identities, child → parent `imprint_of` or label → distributor `distributed_by`, with source, source URL, and notes. Self-links and duplicate typed edges are rejected. Hierarchy/cycle validation belongs to the future write workflow; dates/territories are not included initially.
+
+Merge previews combine compatible scalar metadata, treat unknown/unreviewed as unset, OR favourites, and union URLs. Conflicting nonempty values, link kinds/title/source, or an over-limit union block apply. Manual history and observations transfer while preserving original IDs; full relational rows are included in merge audits and dependency snapshots. Artwork and relationship dependencies conservatively block merge until their policies are implemented.
+
+Automated enrichment and a separate pluggable-provider module are deferred. Shared embedding storage exists, but label document generation, profile-edit embedding refresh, and semantic label search are not implemented. Personal notes are not an implicit embedding input.
 
 ## Implemented Reviewed Label Merges
 

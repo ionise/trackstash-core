@@ -10,7 +10,136 @@ internal static class Migrations
         new SchemaMigration(2, "embedding-work-item-queue", EmbeddingWorkItemQueue),
         new SchemaMigration(3, "label-aggregate-version", LabelAggregateVersion),
         new SchemaMigration(4, "reviewed-label-merges", ReviewedLabelMerges),
+        new SchemaMigration(5, "label-profiles-and-enrichment-foundation", LabelProfiles + LabelProfileGuards()),
     ];
+
+    private static string LabelProfileGuards()
+    {
+        var sql = new System.Text.StringBuilder();
+        foreach (var (table, columns) in new (string, string[])[]
+        {
+            ("label_profile", ["label_id"]), ("label_web_link", ["label_id"]),
+            ("label_profile_revision", ["label_id"]), ("label_observation", ["label_id"]),
+            ("label_artwork", ["label_id"]), ("label_relationship", ["from_label_id", "to_label_id"]),
+        })
+        {
+            var retired = string.Join(" OR ", columns.Select(c => $"EXISTS (SELECT 1 FROM retired_label WHERE retired_id=NEW.{c})"));
+            foreach (var operation in new[] { "INSERT", "UPDATE" })
+                sql.AppendLine($"""
+                    CREATE TRIGGER {table}_no_retired_{operation.ToLowerInvariant()} BEFORE {operation} ON {table}
+                    WHEN {retired}
+                    BEGIN SELECT RAISE(ABORT, 'Label metadata identity is retired; resolve before writing'); END;
+                    """);
+            if (table is "label_profile" or "label_web_link") continue;
+            foreach (var operation in new[] { "INSERT", "UPDATE", "DELETE" })
+            {
+                var ids = columns.SelectMany(c => operation switch
+                {
+                    "INSERT" => new[] { $"NEW.{c}" }, "DELETE" => new[] { $"OLD.{c}" },
+                    _ => new[] { $"OLD.{c}", $"NEW.{c}" },
+                });
+                sql.AppendLine($"""
+                    CREATE TRIGGER {table}_version_{operation.ToLowerInvariant()} AFTER {operation} ON {table}
+                    BEGIN UPDATE label SET version=lower(hex(randomblob(16))) WHERE label_id IN ({string.Join(",", ids)}); END;
+                    """);
+            }
+        }
+        sql.AppendLine("""
+            CREATE TRIGGER profile_revision_immutable BEFORE UPDATE OF revision_id,original_label_id,recorded_utc,actor,before_json,after_json ON label_profile_revision
+            BEGIN SELECT RAISE(ABORT,'Profile revision content is immutable'); END;
+            CREATE TRIGGER profile_revision_no_delete BEFORE DELETE ON label_profile_revision
+            BEGIN SELECT RAISE(ABORT,'Profile revision history is permanent'); END;
+            """);
+        return sql.ToString();
+    }
+
+    private const string LabelProfiles = """
+        CREATE TABLE label_profile (
+            label_id TEXT PRIMARY KEY NOT NULL REFERENCES label(label_id),
+            description TEXT,
+            country_code TEXT CHECK(country_code IS NULL OR (length(country_code) = 2 AND country_code NOT GLOB '*[^A-Z]*')),
+            city TEXT,
+            founded_year INTEGER CHECK(founded_year IS NULL OR (typeof(founded_year) = 'integer' AND founded_year BETWEEN 1 AND 9999)),
+            lifecycle_status TEXT NOT NULL DEFAULT 'unknown' CHECK(lifecycle_status IN ('unknown','active','inactive','closed')),
+            notes TEXT,
+            favourite INTEGER NOT NULL DEFAULT 0 CHECK(favourite IN (0,1)),
+            review_status TEXT NOT NULL DEFAULT 'unreviewed' CHECK(review_status IN ('unreviewed','in_progress','reviewed'))
+        );
+        CREATE TABLE label_web_link (
+            label_id TEXT NOT NULL REFERENCES label(label_id),
+            url TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('official','bandcamp','discogs','musicbrainz','resident_advisor','beatport','social','other')),
+            title TEXT,
+            source_url TEXT,
+            PRIMARY KEY(label_id,url)
+        );
+        CREATE TABLE label_profile_revision (
+            revision_id TEXT PRIMARY KEY NOT NULL,
+            label_id TEXT NOT NULL REFERENCES label(label_id),
+            original_label_id TEXT NOT NULL,
+            recorded_utc TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            before_json TEXT NOT NULL,
+            after_json TEXT NOT NULL
+        );
+        CREATE INDEX idx_label_profile_revision_label ON label_profile_revision(label_id,recorded_utc);
+        CREATE TABLE label_observation (
+            observation_id TEXT PRIMARY KEY NOT NULL,
+            label_id TEXT NOT NULL REFERENCES label(label_id),
+            original_label_id TEXT NOT NULL,
+            field_name TEXT NOT NULL,
+            value_json TEXT NOT NULL,
+            source TEXT NOT NULL,
+            external_id TEXT,
+            source_url TEXT,
+            retrieved_utc TEXT NOT NULL,
+            attribution TEXT,
+            license TEXT,
+            retention_until_utc TEXT,
+            decision TEXT NOT NULL DEFAULT 'proposed' CHECK(decision IN ('proposed','accepted','rejected')),
+            reviewed_utc TEXT,
+            reviewed_by TEXT
+        );
+        CREATE INDEX idx_label_observation_label_field ON label_observation(label_id,field_name);
+        CREATE TABLE label_artwork (
+            artwork_id TEXT PRIMARY KEY NOT NULL,
+            label_id TEXT NOT NULL REFERENCES label(label_id),
+            role TEXT NOT NULL CHECK(role IN ('logo','image')),
+            mime_type TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            content BLOB NOT NULL,
+            source_url TEXT,
+            attribution TEXT,
+            usage_rights TEXT NOT NULL,
+            created_utc TEXT NOT NULL
+        );
+        CREATE INDEX idx_label_artwork_label ON label_artwork(label_id);
+        CREATE TABLE label_relationship (
+            relationship_id TEXT PRIMARY KEY NOT NULL,
+            from_label_id TEXT NOT NULL REFERENCES label(label_id),
+            to_label_id TEXT NOT NULL REFERENCES label(label_id),
+            relationship_type TEXT NOT NULL CHECK(relationship_type IN ('imprint_of','distributed_by')),
+            source TEXT NOT NULL,
+            source_url TEXT,
+            notes TEXT,
+            created_utc TEXT NOT NULL,
+            CHECK(from_label_id <> to_label_id),
+            UNIQUE(from_label_id,to_label_id,relationship_type)
+        );
+        CREATE INDEX idx_label_relationship_to ON label_relationship(to_label_id);
+        CREATE TRIGGER profile_version_insert AFTER INSERT ON label_profile
+        BEGIN UPDATE label SET version=lower(hex(randomblob(16))) WHERE label_id=NEW.label_id; END;
+        CREATE TRIGGER profile_version_update AFTER UPDATE ON label_profile
+        BEGIN UPDATE label SET version=lower(hex(randomblob(16))) WHERE label_id IN (OLD.label_id,NEW.label_id); END;
+        CREATE TRIGGER profile_version_delete AFTER DELETE ON label_profile
+        BEGIN UPDATE label SET version=lower(hex(randomblob(16))) WHERE label_id=OLD.label_id; END;
+        CREATE TRIGGER web_link_version_insert AFTER INSERT ON label_web_link
+        BEGIN UPDATE label SET version=lower(hex(randomblob(16))) WHERE label_id=NEW.label_id; END;
+        CREATE TRIGGER web_link_version_update AFTER UPDATE ON label_web_link
+        BEGIN UPDATE label SET version=lower(hex(randomblob(16))) WHERE label_id IN (OLD.label_id,NEW.label_id); END;
+        CREATE TRIGGER web_link_version_delete AFTER DELETE ON label_web_link
+        BEGIN UPDATE label SET version=lower(hex(randomblob(16))) WHERE label_id=OLD.label_id; END;
+        """;
 
     private const string ReviewedLabelMerges = """
         CREATE TABLE label_merge_operation (

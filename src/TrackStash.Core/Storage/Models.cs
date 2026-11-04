@@ -24,6 +24,8 @@ public sealed record Label : CanonicalEntity
     public string? SortName { get; init; }
 
     public string Version { get; init; } = string.Empty;
+
+    public LabelProfile Profile { get; init; } = new();
 }
 
 public sealed record Artist : CanonicalEntity

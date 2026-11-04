@@ -381,6 +381,12 @@ internal sealed class SqliteEntityDeleteService : IEntityDeleteService
         // Blockers: release_label_link references this label
         await CountAndAddBlockerAsync("retired_label", "canonical_id", labelId,
             "Retired identities resolve to this label; merge rather than delete", blockers, cancellationToken);
+        foreach (var table in new[] { "label_profile", "label_web_link", "label_profile_revision", "label_observation", "label_artwork" })
+            await CountAndAddBlockerAsync(table, "label_id", labelId,
+                "Label metadata must be preserved; deletion snapshots do not yet support it", blockers, cancellationToken);
+        foreach (var column in new[] { "from_label_id", "to_label_id" })
+            await CountAndAddBlockerAsync("label_relationship", column, labelId,
+                "Other label identities are related to this label", blockers, cancellationToken);
         await CountAndAddBlockerAsync(
             "release_label_link",
             "label_id",
