@@ -3,7 +3,8 @@ namespace TrackStash.Core.Storage;
 public sealed record StorageProviderDescriptor(
     string Provider,
     string? DatabasePath = null,
-    string? ConnectionString = null);
+    string? ConnectionString = null,
+    string? ArtworkRoot = null);
 
 public interface IStorageProviderFactory
 {
@@ -24,6 +25,8 @@ public interface IUnitOfWork : IAsyncDisposable
     ILabelRepository Labels { get; }
 
     ILabelMergeRepository LabelMerges { get; }
+
+    IArtworkRepository Artwork { get; }
 
     IArtistRepository Artists { get; }
 

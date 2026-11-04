@@ -10,11 +10,11 @@ namespace TrackStash.Core.Sqlite;
 internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, SqliteTransaction transaction) : ILabelMergeRepository
 {
     private readonly SqliteLabelRepository _labels = new(connection, transaction);
-    private const int PlanFormatVersion = 2;
+    private const int PlanFormatVersion = 3;
     private sealed record Plan(Label Survivor, Label Retired, Label Combined, MergeReleaseLink[] Links,
-        Dictionary<string, List<Dictionary<string, object?>>> Rows, string[] Blockers)
+        Dictionary<string, List<Dictionary<string, object?>>> Rows, string[] Blockers, ArtworkEntry[] Artwork)
     {
-        public string Snapshot => JsonSerializer.Serialize(new { PlanFormatVersion, Survivor, Retired, Combined, Links, Rows, Blockers });
+        public string Snapshot => JsonSerializer.Serialize(new { PlanFormatVersion, Survivor, Retired, Combined, Links, Rows, Blockers, Artwork });
         public string Hash => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Snapshot)));
     }
 
@@ -34,8 +34,9 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
             ["The retired ID will redirect permanently. This operation has no automatic undo.",
              "Survivor name and sort name are retained; transferred aliases are non-primary.",
              "Operator attribution is unverified; the API key represents a shared local credential.",
-             "Compatible profile fields and links are combined; conflicting profile values block apply. Personal favourites are combined."],
-            Profile: plan.Combined.Profile);
+             "Compatible profile fields and links are combined; conflicting profile values block apply. Personal favourites are combined.",
+             "Survivor artwork comes first; retired artwork is appended. Survivor preference wins, otherwise retired preference carries forward. Assets and provenance are retained."],
+            Profile: plan.Combined.Profile, Artwork: plan.Artwork);
         await ExecuteAsync("""
             INSERT INTO label_merge_operation(operation_id, survivor_id, retired_id, version, expires_utc, state_hash, preview_json)
             VALUES (@op, @s, @r, @version, @expires, @hash, @preview)
@@ -85,11 +86,17 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
                 cancellationToken, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
             await _labels.UpsertAsync(plan.Combined with { UpdatedUtc = now }, cancellationToken).ConfigureAwait(false);
             await _labels.WriteProfileAsync(survivorId, plan.Combined.Profile, cancellationToken).ConfigureAwait(false);
+            await ExecuteAsync("DELETE FROM label_artwork_link WHERE label_id=@r", cancellationToken, ("r", retiredId)).ConfigureAwait(false);
+            var artwork = new SqliteArtworkRepository(connection, transaction);
+            var gallery = (await artwork.GetLabelGalleryAsync(survivorId, cancellationToken).ConfigureAwait(false))!;
+            var artworkResult = await artwork.ReplaceLabelGalleryAsync(survivorId, gallery.Version, plan.Artwork, cancellationToken).ConfigureAwait(false);
+            if (artworkResult.Status != LabelUpdateStatus.Updated) throw new InvalidOperationException("Merge artwork transfer failed.");
             await ExecuteAsync("""
                 DELETE FROM label_web_link WHERE label_id=@r;
                 DELETE FROM label_profile WHERE label_id=@r;
                 UPDATE label_profile_revision SET label_id=@s WHERE label_id=@r;
                 UPDATE label_observation SET label_id=@s WHERE label_id=@r;
+                UPDATE label_artwork_revision SET label_id=@s WHERE label_id=@r;
                 """, cancellationToken, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
             await ExecuteAsync("DELETE FROM release_label_link WHERE label_id IN (@s, @r)", cancellationToken,
                 ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
@@ -157,9 +164,13 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
                 ct, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
         rows["retired_label"] = await RowsAsync("SELECT * FROM retired_label WHERE canonical_id IN (@s, @r) ORDER BY retired_id",
             ct, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
-        foreach (var table in new[] { "label_profile", "label_web_link", "label_profile_revision", "label_observation" })
+        foreach (var table in new[] { "label_profile", "label_web_link", "label_profile_revision", "label_observation", "label_artwork_link", "label_artwork_revision" })
             rows[table] = await RowsAsync($"SELECT * FROM {table} WHERE label_id IN (@s,@r) ORDER BY 1,2",
                 ct, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
+        rows["artwork_asset"] = await RowsAsync("""
+            SELECT * FROM artwork_asset WHERE asset_id IN
+            (SELECT asset_id FROM label_artwork_link WHERE label_id IN (@s,@r)) ORDER BY asset_id
+            """, ct, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
         foreach (var table in new[] { "embedding_document", "embedding_work_item" })
             rows[table] = await RowsAsync($"SELECT * FROM {table} WHERE lower(entity_type) = 'label' AND entity_id IN (@s, @r) ORDER BY 1, 2, 3, 4",
                 ct, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
@@ -209,13 +220,20 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
             if (roles.Length > 1) blockers.Add($"Release {group.Key} has incompatible label roles.");
             links.Add(new(group.Key, group.Any(r => Convert.ToInt64(r["is_primary"]) != 0), roles.FirstOrDefault()));
         }
+        var artworkRepository = new SqliteArtworkRepository(connection, transaction);
+        var keptArtwork = (await artworkRepository.GetLabelGalleryAsync(survivorId, ct).ConfigureAwait(false))!.Items;
+        var movedArtwork = (await artworkRepository.GetLabelGalleryAsync(retiredId, ct).ConfigureAwait(false))!.Items;
+        var combinedArtwork = keptArtwork.Concat(movedArtwork.Select(item =>
+            item with { IsPreferred = item.IsPreferred && !keptArtwork.Any(k => k.IsPreferred) })).ToArray();
+        if (combinedArtwork.Length > ArtworkRules.MaximumItems)
+            blockers.Add("Combined artwork exceeds the 100-image limit. Review galleries before merging.");
         return new(survivor, retired, survivor with
         {
             NormalizedName = EntityNameNormalizer.NormalizeStrict(survivor.Name),
             Aliases = aliases.Values.OrderBy(a => a.Value, StringComparer.Ordinal).ToArray(),
             ExternalReferences = references,
             Profile = CombineProfiles(survivor.Profile, retired.Profile, blockers),
-        }, links.ToArray(), rows, blockers.ToArray());
+        }, links.ToArray(), rows, blockers.ToArray(), combinedArtwork);
     }
 
     private async Task InspectUnknownDependenciesAsync(Dictionary<string, List<Dictionary<string, object?>>> rows,
@@ -226,7 +244,8 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
         {
             var table = (string)tableRow["name"]!;
             if (table is "label_alias" or "label_external_ref" or "release_label_link" or "retired_label"
-                or "label_profile" or "label_web_link" or "label_profile_revision" or "label_observation") continue;
+                or "label_profile" or "label_web_link" or "label_profile_revision" or "label_observation"
+                or "label_artwork_link" or "label_artwork_revision") continue;
             var foreignKeys = await RowsAsync($"PRAGMA foreign_key_list({Quote(table)})", ct).ConfigureAwait(false);
             foreach (var fk in foreignKeys.Where(f => (string?)f["table"] == "label"))
             {

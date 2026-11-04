@@ -6,10 +6,12 @@ namespace TrackStash.Core.Sqlite;
 public sealed class SqliteStorageProvider : IStorageProvider
 {
     private readonly string _connectionString;
+    private readonly string? _artworkRoot;
 
-    public SqliteStorageProvider(string databasePath)
+    public SqliteStorageProvider(string databasePath, string? artworkRoot = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
+        _artworkRoot = artworkRoot;
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = databasePath,
@@ -21,7 +23,7 @@ public sealed class SqliteStorageProvider : IStorageProvider
         }.ToString();
     }
 
-    public IMigrationRunner Migrations => new SqliteMigrationRunner(_connectionString);
+    public IMigrationRunner Migrations => new SqliteMigrationRunner(_connectionString, _artworkRoot);
 
     public StorageCapabilities Capabilities { get; } = new StorageCapabilities
     {

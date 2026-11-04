@@ -14,6 +14,6 @@ public sealed class SqliteStorageProviderFactory : IStorageProviderFactory
         if (string.IsNullOrWhiteSpace(descriptor.DatabasePath))
             throw new ArgumentException("DatabasePath is required for sqlite provider.");
 
-        return new SqliteStorageProvider(descriptor.DatabasePath);
+        return new SqliteStorageProvider(descriptor.DatabasePath, descriptor.ArtworkRoot);
     }
 }

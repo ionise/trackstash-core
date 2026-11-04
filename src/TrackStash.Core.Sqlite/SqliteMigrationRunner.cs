@@ -6,10 +6,12 @@ namespace TrackStash.Core.Sqlite;
 public sealed class SqliteMigrationRunner : IMigrationRunner
 {
     private readonly string _connectionString;
+    private readonly string? _artworkRoot;
 
-    public SqliteMigrationRunner(string connectionString)
+    public SqliteMigrationRunner(string connectionString, string? artworkRoot = null)
     {
         _connectionString = connectionString;
+        _artworkRoot = artworkRoot;
     }
 
     public async ValueTask<int> GetCurrentVersionAsync(CancellationToken cancellationToken = default)
@@ -37,12 +39,50 @@ public sealed class SqliteMigrationRunner : IMigrationRunner
         foreach (var migration in Migrations.All.Where(m => m.Version > currentVersion).OrderBy(m => m.Version))
         {
             await using var tx = connection.BeginTransaction();
+            var exportedAssets = new List<string>();
+            var exportedHashes = new Dictionary<string, string>(StringComparer.Ordinal);
+            ManagedArtworkStore? artworkStore = null;
             try
             {
                 using var cmd = connection.CreateCommand();
                 cmd.Transaction = tx;
                 cmd.CommandText = migration.Sql;
                 await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+                if (migration.Version == 6)
+                {
+                    using var legacy = connection.CreateCommand();
+                    legacy.Transaction = tx;
+                    legacy.CommandText = """
+                        SELECT asset.asset_id,old.content FROM label_artwork old
+                        JOIN artwork_asset asset ON asset.legacy_artwork_id=old.artwork_id
+                        """;
+                    await using (var reader = await legacy.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+                        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                        {
+                            artworkStore ??= new ManagedArtworkStore(_artworkRoot);
+                            var id = reader.GetString(0);
+                            var content = (byte[])reader.GetValue(1);
+                            await artworkStore.SaveAsync(id, content, null, cancellationToken).ConfigureAwait(false);
+                            exportedAssets.Add(id);
+                            exportedHashes.Add(id, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content)));
+                        }
+                    foreach (var id in exportedAssets)
+                    {
+                        using var hash = connection.CreateCommand();
+                        hash.Transaction = tx;
+                        hash.CommandText = "UPDATE artwork_asset SET content_hash=@hash WHERE asset_id=@id";
+                        hash.Parameters.AddWithValue("@id", id);
+                        hash.Parameters.AddWithValue("@hash", exportedHashes[id]);
+                        await hash.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    legacy.CommandText = """
+                        DROP TABLE label_artwork;
+                        CREATE TRIGGER artwork_asset_immutable BEFORE UPDATE ON artwork_asset
+                        BEGIN SELECT RAISE(ABORT,'Artwork assets are immutable; create a replacement'); END;
+                        """;
+                    await legacy.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                }
 
                 using var recordCmd = connection.CreateCommand();
                 recordCmd.Transaction = tx;
@@ -60,7 +100,9 @@ public sealed class SqliteMigrationRunner : IMigrationRunner
             }
             catch
             {
-                await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                await tx.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                foreach (var assetId in exportedAssets)
+                    await artworkStore!.DeleteUncommittedAsync(assetId, CancellationToken.None).ConfigureAwait(false);
                 throw;
             }
         }

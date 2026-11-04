@@ -1,14 +1,33 @@
 # Shared Artwork Design Intent
 
-Status: agreed direction, not implemented. Recorded 2026-11-04.
+Status: shared assets and label upload/gallery slice implemented in migration 6; artist/release consumers and recording resolution remain planned. Recorded 2026-11-04.
 
 ## Purpose and Current State
 
 Artwork is common catalog infrastructure for labels, artists, releases, and recordings, not a separate upload implementation for each entity. Support individual logos/covers as well as ordered galleries. Labels will be the first consumer; other entity screens need not be implemented at the same time.
 
-Migration 5 currently provides only a label-specific `label_artwork` table containing local content and source/rights metadata. There are no implemented shared image contracts, upload/serving workflows, galleries, or recording artwork resolver. Existing schema sketches and catalog TODOs are not evidence of those capabilities.
+Migration 5 originally provided only a label-specific `label_artwork` table. Migration 6 supersedes it with shared `artwork_asset` metadata, foreign-key-backed `label_artwork_link` associations, and permanent `label_artwork_revision` history. Shared asset/content contracts, label uploads, protected originals/thumbnails, galleries, and survivor-first merge transfer are now implemented. There is still no artist/release gallery workflow or recording artwork resolver.
 
-This document records intent so implementation can proceed in small, independently verifiable increments. Exact contracts, schema names, HTTP routes, limits, and image-processing dependencies remain to be designed.
+This document records the broader intent and staged delivery. The concrete first-slice choices below supersede open design points for labels; future entities and recording fallback remain design intent, not implemented capabilities. Finish Labels first, then Artists; Releases follow when label and artist associations are ready.
+
+## Implemented Label Slice
+
+- [Shared contracts](../src/TrackStash.Core/Storage/Artwork.cs): immutable asset metadata and ordered label associations. Label roles are `logo` and `image`; at most 100 entries and one preferred image per gallery. No implicit preferred selection or content-hash deduplication is performed.
+- [Managed content store](../src/TrackStash.Core/Storage/ManagedArtworkStore.cs): originals and JPEG thumbnails are files outside the catalog database and Git working trees. The default root is `<LocalApplicationData>/TrackStash/artwork-data` (using .NET's platform-specific user data directory). Override it with `TRACKSTASH_ARTWORK_ROOT`; the API additionally accepts `CatalogApi:ArtworkRoot`, which takes precedence. Paths must be absolute, and roots within Git repositories are rejected. Only server-generated asset IDs form storage paths; original filenames are metadata.
+- Set the same root for migration and the API. Bootstrap uses `TRACKSTASH_ARTWORK_ROOT` (or the default); the provider descriptor also supports an explicit root. Changing configuration does not relocate existing files. Missing files produce explicit `409 artwork_unavailable`, not a successful empty image.
+- Upload policy: static JPEG/PNG only, maximum 10 MiB, 25,000,000 pixels, and 16,384 pixels per side. SkiaSharp 3.119.4 verifies complete decoding; APNG is explicitly rejected. Thumbnails fit within 512 pixels, apply EXIF orientation, flatten transparency onto white, and omit source metadata. Originals retain their exact bytes and embedded metadata. No fetching, automatic rights validation, or image editing occurs.
+- Usage-rights text is mandatory (up to 2,000 characters); source URL (HTTP(S), 2,048), attribution (1,000), and filename (255) are optional metadata. Captions (1,000), roles, ordering, and preference belong to associations. Provenance is immutable: replace an upload to correct it, retaining the old asset and history.
+- Upload/replace validates and writes a new asset directory before committing the gallery transaction. Ordinary failures remove only that upload's uncommitted files. A process/power failure can leave unreferenced directories; no automatic garbage collection or permanent asset deletion is exposed. SQL asset metadata is immutable and retained for history. Database and managed files together form the catalog's artwork state.
+- Gallery GET and mutations use the label aggregate ETag. Upload appends, or atomically replaces an existing entry in its original position when `replaceEntryId` is supplied. JSON full-gallery replacement edits/reorders/detaches existing entries without changing asset identity. Both paths record permanent before/after association history; revisions retain original label IDs on merge. Conditional scalar/profile changes and artwork changes invalidate one another's stale tokens.
+- The label Show page offers **Manage artwork**. Uploads save immediately; draft gallery edits save separately. Images load through authenticated fetch into temporary browser blob URLs, revoked on unmount. No keys appear in URLs, public static assets, or browser storage. Content is served with no-store/nosniff headers. The original-content route remains protected, including for detached assets retained in history.
+- Merges preserve the survivor's gallery order, append every retired entry in order, and keep the survivor's preferred image. If the survivor has no preference, the retired preference carries forward. Even identical assets remain separate associations when they have separate entry IDs; no provenance is silently collapsed. A combined gallery over 100 entries blocks apply. Previews display the result; full association/asset metadata and revision snapshots join the dependency digest/audit. Artwork edits invalidate prior reviews. Assets/bytes are not copied or deleted on merge.
+- Deletion remains blocked for labels with artwork associations or history until complete safe-delete/restore semantics exist. No automatic orphan/content pruning is implemented.
+
+### Upgrade and Backup Boundary
+
+Migration 6 exports all legacy BLOBs into managed files, preserves original association IDs and provenance/timestamps, and removes `label_artwork` only after successful export. The new asset records a verified SHA-256 hash and retains the original hash in `legacy_content_hash`, with `legacy_artwork_id` linking the identity mapping. Legacy dimensions remain unknown; a thumbnail is derived on read after validation. Unsupported legacy bytes are preserved but explicitly rejected for serving, not silently discarded. Failed upgrades roll back database changes and clean up their exported files.
+
+**A database-only backup is no longer a complete artwork backup.** Until a native backup/restore feature is delivered, stop writers, take a consistent database backup, and preserve the configured artwork root with it. Restore the matching database and asset files before restarting with the same root configuration. Do not copy a live SQLite database as an ordinary file or delete retained assets to save space. A future backup feature must include the root/manifest, original checksums, retained history assets, thumbnails or regeneration policy, and a tested coordinated restore. It is explicitly tracked in the catalog TODOs.
 
 ## Agreed Model
 
@@ -23,7 +42,7 @@ Separate stored image assets from their use by a catalog entity:
 
 One asset may be associated with several entities without copying its content. A content hash can identify identical bytes, but does not establish equivalent provenance or usage rights. Deduplication must not silently collapse distinct rights/source records; the metadata policy must be settled before automatic reuse.
 
-Original uploaded content and derived thumbnails are distinct: originals are authoritative, while thumbnails can be regenerated. Physical storage remains an adapter concern; choose database BLOBs versus managed local files before implementing persistence. Clients must not supply arbitrary filesystem paths.
+Original uploaded content and derived thumbnails are distinct: originals are authoritative, while thumbnails can be regenerated. Managed local files were selected for the label slice; physical storage remains behind the shared content-store interface. Clients must not supply arbitrary filesystem paths.
 
 ### Entity associations
 
@@ -83,7 +102,7 @@ Removing artwork from an entity means detaching its association, not deleting a 
 
 Asset deletion needs reference checks, history/retention rules, and deliberate orphan cleanup. Do not cascade deletion of one entity into shared images. Whether an audit retains content or only metadata/references must be decided before irreversible deletion is offered.
 
-Artwork-aware label merges must review association transfer, duplicate asset links, roles, gallery order, preferred-image conflicts, provenance, and retirement/version handling. Preserve associations or block explicitly; never silently discard artwork. Until a tested transfer policy exists, retain the current conservative merge blocker. Likewise, do not bypass metadata deletion blockers before safe snapshot/restore semantics exist.
+Artwork-aware label merges must review association transfer, duplicate asset links, roles, gallery order, preferred-image conflicts, provenance, and retirement/version handling. The label slice implements the survivor-first stacking policy described above; unrelated unsupported dependencies still block. Future entity mergers must define their own policy, not silently discard artwork. Do not bypass metadata deletion blockers before safe snapshot/restore semantics exist.
 
 ## Migration Direction
 

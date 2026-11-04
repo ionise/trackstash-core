@@ -2,7 +2,7 @@ namespace TrackStash.Core.Sqlite;
 
 internal sealed record SchemaMigration(int Version, string Name, string Sql);
 
-internal static class Migrations
+internal static partial class Migrations
 {
     public static IReadOnlyList<SchemaMigration> All { get; } =
     [
@@ -11,6 +11,7 @@ internal static class Migrations
         new SchemaMigration(3, "label-aggregate-version", LabelAggregateVersion),
         new SchemaMigration(4, "reviewed-label-merges", ReviewedLabelMerges),
         new SchemaMigration(5, "label-profiles-and-enrichment-foundation", LabelProfiles + LabelProfileGuards()),
+        new SchemaMigration(6, "shared-artwork-and-label-galleries", SharedArtwork),
     ];
 
     private static string LabelProfileGuards()

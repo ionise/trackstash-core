@@ -175,7 +175,6 @@ public sealed class LabelProfileTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("INSERT INTO label_artwork VALUES ('logo','other','logo','image/png','hash',X'00','https://example.test','Owner','Permission required','2026-11-04')")]
     [InlineData("INSERT INTO label_relationship VALUES ('relation','other','keep','imprint_of','manual',NULL,NULL,'2026-11-04')")]
     public async Task SchemaOnlyData_BlocksUnsafeMergeAndDeletion(string sql)
     {
@@ -201,7 +200,7 @@ public sealed class LabelProfileTests : IAsyncLifetime
             "INSERT INTO label_web_link VALUES ('other','https://example.test','official',NULL,NULL)",
             "INSERT INTO label_profile_revision VALUES ('revision','other','other','now','manual','{}','{}')",
             "INSERT INTO label_observation VALUES ('o','other','other','city','\"City\"','manual',NULL,NULL,'now',NULL,NULL,NULL,'proposed',NULL,NULL)",
-            "INSERT INTO label_artwork VALUES ('a','other','logo','image/png','hash',X'00',NULL,NULL,'Unknown','now')",
+            "INSERT INTO label_artwork_link VALUES ('a','other','0123456789abcdef0123456789abcdef','logo',NULL,0,0)",
             "INSERT INTO label_relationship VALUES ('r','other','keep','imprint_of','manual',NULL,NULL,'now')",
             "INSERT INTO label_relationship VALUES ('r','keep','other','imprint_of','manual',NULL,NULL,'now')",
         })

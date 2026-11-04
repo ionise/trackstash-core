@@ -21,7 +21,7 @@ public sealed record LabelMergePreview(
     MergeLabelSummary Survivor, MergeLabelSummary Retired,
     IReadOnlyList<MergeAlias> Aliases, IReadOnlyList<MergeReference> ExternalReferences,
     IReadOnlyList<MergeReleaseLink> ReleaseLinks, IReadOnlyList<string> Blockers,
-    IReadOnlyList<string> Warnings, LabelProfile? Profile = null);
+    IReadOnlyList<string> Warnings, LabelProfile? Profile = null, IReadOnlyList<ArtworkEntry>? Artwork = null);
 public sealed record LabelMergeOutcome(string OperationId, string AuditId, string CanonicalId, DateTimeOffset AppliedUtc);
 
 public enum LabelMergeStatus { Ready, Applied, NotFound, Stale, Expired, Blocked, ReplayConflict }
