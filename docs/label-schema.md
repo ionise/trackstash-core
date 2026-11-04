@@ -40,6 +40,8 @@ Merge previews combine compatible scalar metadata, treat unknown/unreviewed as u
 
 Automated enrichment and a separate pluggable-provider module are deferred. Shared embedding storage exists, but label document generation, profile-edit embedding refresh, and semantic label search are not implemented. Personal notes are not an implicit embedding input.
 
+Artwork direction is now [shared assets and entity associations](artwork-design.md), with labels as the first upload/gallery consumer. The label-specific table is a transitional schema foundation, not the intended common asset store. Supersede it with a new data-preserving migration; do not rewrite applied migration 5. Artist/release reuse and recording release-context fallback are staged separately.
+
 ## Implemented Reviewed Label Merges
 
 [Merge and identity-resolution contracts](../src/TrackStash.Core/Storage/LabelMerges.cs) provide pairwise preview/apply and explicit active/retired/missing identity results. The existing external-reference composite key already supports several Beatport IDs per label; merge does not introduce provider-specific columns or unique normalized names.
