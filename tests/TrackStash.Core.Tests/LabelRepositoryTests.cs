@@ -289,6 +289,9 @@ public sealed class LabelRepositoryTests : IAsyncLifetime
                     CREATE TABLE label_alias (label_id TEXT, value TEXT, normalized_value TEXT, is_primary INTEGER);
                     CREATE TABLE label_external_ref (label_id TEXT, source TEXT, external_id TEXT, is_primary INTEGER,
                         last_seen_utc TEXT, payload_json TEXT);
+                    CREATE TABLE release_label_link (release_id TEXT, label_id TEXT, is_primary INTEGER, role TEXT);
+                    CREATE TABLE embedding_document (entity_id TEXT, entity_type TEXT);
+                    CREATE TABLE embedding_work_item (entity_id TEXT, entity_type TEXT);
                     INSERT INTO label (label_id, name) VALUES ('legacy-id', 'Keep me'), ('other-id', 'Keep me');
                     INSERT INTO label_alias VALUES ('legacy-id', 'Original alias', NULL, 0);
                     """;
@@ -296,8 +299,8 @@ public sealed class LabelRepositoryTests : IAsyncLifetime
             }
             var provider = new SqliteStorageProvider(path);
             var migrated = await provider.Migrations.ApplyPendingMigrationsAsync();
-            Assert.Equal(3, migrated.CurrentVersion);
-            Assert.Single(migrated.AppliedMigrations);
+            Assert.Equal(4, migrated.CurrentVersion);
+            Assert.Equal(2, migrated.AppliedMigrations.Count);
             Assert.Empty((await provider.Migrations.ApplyPendingMigrationsAsync()).AppliedMigrations);
             await using var unit = await provider.BeginUnitOfWorkAsync();
             var label = Assert.IsType<Label>(await unit.Labels.GetByIdAsync("legacy-id"));

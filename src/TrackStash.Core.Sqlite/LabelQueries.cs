@@ -59,6 +59,7 @@ internal sealed partial class SqliteLabelRepository
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedVersion);
         ArgumentNullException.ThrowIfNull(update);
         update.Validate();
+        await RejectRetiredAsync(labelId, cancellationToken).ConfigureAwait(false);
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = _transaction;
         cmd.CommandText = """

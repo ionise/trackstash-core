@@ -226,6 +226,13 @@ internal sealed class SqliteEntityDeleteService : IEntityDeleteService
         var prerequisites = new List<string>();
         var tablesToRestore = new List<string>();
         var derivedDataToRebuild = new List<string>();
+        if (tombstone.EntityType.Equals("label", StringComparison.OrdinalIgnoreCase))
+        {
+            var identity = await new SqliteLabelRepository(_connection, _transaction)
+                .ResolveIdentityAsync(tombstone.EntityId, cancellationToken).ConfigureAwait(false);
+            if (identity.IsRetired)
+                conflicts.Add($"Label '{tombstone.EntityId}' is retired; canonical label is '{identity.CanonicalId}'.");
+        }
 
         // Check if entity already exists
         var existingEntity = await GetEntityJsonAsync(tombstone.EntityType, tombstone.EntityId, cancellationToken);
@@ -372,6 +379,8 @@ internal sealed class SqliteEntityDeleteService : IEntityDeleteService
         CancellationToken cancellationToken = default)
     {
         // Blockers: release_label_link references this label
+        await CountAndAddBlockerAsync("retired_label", "canonical_id", labelId,
+            "Retired identities resolve to this label; merge rather than delete", blockers, cancellationToken);
         await CountAndAddBlockerAsync(
             "release_label_link",
             "label_id",

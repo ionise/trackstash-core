@@ -36,7 +36,7 @@ public sealed class SqliteStorageProvider : IStorageProvider
     {
         var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        var transaction = connection.BeginTransaction();
+        var transaction = connection.BeginTransaction(deferred: false);
         return new SqliteUnitOfWork(connection, transaction);
     }
 }

@@ -14,13 +14,23 @@ See [delete-semantics.md](delete-semantics.md) for the delete rules and full rec
 
 ## Implemented Query and Conditional-update Contracts
 
-[LabelQuery, LabelPage, and LabelUpdate](../src/TrackStash.Core/Storage/LabelQueries.cs) and [ILabelRepository](../src/TrackStash.Core/Storage/Contracts.cs) provide paged candidate queries, create-only insertion, and atomic expected-version updates. Name/provider matches can be ambiguous and are not unique-identity constraints. Legacy single-result lookups/upserts retain their existing behavior.
+[LabelQuery, LabelPage, and LabelUpdate](../src/TrackStash.Core/Storage/LabelQueries.cs) and [ILabelRepository](../src/TrackStash.Core/Storage/Contracts.cs) provide paged candidate queries, create-only insertion, and atomic expected-version updates. Name/provider matches can be ambiguous and are not unique-identity constraints. Single-result provider lookup now rejects ambiguity explicitly; normalized-name lookup remains a legacy first-match operation, not a merge decision.
 
 SQLite migration 3 adds `label.version`, backfills it, and installs triggers for scalar label changes and owned alias/reference changes. Tokens are opaque, persisted, transactionally rolled back, and refreshed on insertion/restore, not derived from timestamps or incremented from caller input. Legacy unconditional writers invalidate read tokens without becoming conditional writers themselves. Child changes do not necessarily update the label's `updated_utc`.
 
 The adapter normalizes actual name/alias text for substring search using the shared normalizer, including aliases with null normalized values. It executes filtered count and page queries in the same unit of work and returns lightweight list items without child hydration. Conditional edits only set supplied name/sort-name fields and server-owned normalization/update time; they preserve provider payloads and children.
 
 Other adapters must preserve these contract semantics and provide equivalent invalidation for all supported write paths; SQLite triggers are an implementation detail. Migrate existing catalogs explicitly using bootstrap before running code that reads label versions. See the [catalog foundation contract](../../trackstash-catalog/docs/api-design.md#implemented-foundation) for validation, sorting, paging, version scope, and application projections.
+
+## Implemented Reviewed Label Merges
+
+[Merge and identity-resolution contracts](../src/TrackStash.Core/Storage/LabelMerges.cs) provide pairwise preview/apply and explicit active/retired/missing identity results. The existing external-reference composite key already supports several Beatport IDs per label; merge does not introduce provider-specific columns or unique normalized names.
+
+SQLite migration 4 adds `label_merge_operation`, append-only `label_merge_audit`, and permanent `retired_label` mappings. It extends aggregate version invalidation to release-label links and guards against retired-ID reuse through insert/upsert, restore, child/link writers, and embedding work. Survivor deletion is blocked while retired identities resolve to it. Later merges retarget historical mappings atomically; normal reads can explicitly resolve retired IDs without silently redirecting writes.
+
+Apply runs within an immediate transaction, revalidates the full reviewed dependency digest, and uses a savepoint so a failed apply cannot leave partial transfers even if a caller catches the error and commits. Known embeddings are invalidated and their models queued for forced regeneration; processing embedding jobs and unsupported incoming foreign-key dependencies block merge. The before-state audit snapshots actual relational rows, including payloads, links, derived rows/vectors, flags, and timestamps, rather than relying on deletion tombstones.
+
+All adapters must implement equivalent atomicity, conflict/retirement semantics, and retry guarantees. Schema-version inspection does not create schema tables on an uninitialized database. Migration is explicit and never chooses duplicate identities automatically. See the [catalog merge contract](../../trackstash-catalog/docs/api-design.md#reviewed-label-merge-design) for collision rules, audit access/retention, HTTP status codes, GUI review, import safeguards, and exclusions.
 
 Related documents:
 

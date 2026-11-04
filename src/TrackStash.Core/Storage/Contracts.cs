@@ -23,6 +23,8 @@ public interface IUnitOfWork : IAsyncDisposable
 {
     ILabelRepository Labels { get; }
 
+    ILabelMergeRepository LabelMerges { get; }
+
     IArtistRepository Artists { get; }
 
     IReleaseRepository Releases { get; }
@@ -51,6 +53,8 @@ public interface IMigrationRunner
 
 public interface ILabelRepository
 {
+    ValueTask<LabelIdentity> ResolveIdentityAsync(string labelId, CancellationToken cancellationToken = default);
+
     ValueTask<LabelPage> QueryAsync(LabelQuery query, CancellationToken cancellationToken = default);
 
     ValueTask<bool> TryCreateAsync(Label label, CancellationToken cancellationToken = default);

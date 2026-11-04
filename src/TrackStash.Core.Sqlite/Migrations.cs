@@ -9,7 +9,103 @@ internal static class Migrations
         new SchemaMigration(1, "initial-schema", InitialSchema),
         new SchemaMigration(2, "embedding-work-item-queue", EmbeddingWorkItemQueue),
         new SchemaMigration(3, "label-aggregate-version", LabelAggregateVersion),
+        new SchemaMigration(4, "reviewed-label-merges", ReviewedLabelMerges),
     ];
+
+    private const string ReviewedLabelMerges = """
+        CREATE TABLE label_merge_operation (
+            operation_id TEXT PRIMARY KEY NOT NULL,
+            survivor_id TEXT NOT NULL,
+            retired_id TEXT NOT NULL,
+            version TEXT NOT NULL,
+            expires_utc TEXT NOT NULL,
+            state_hash TEXT NOT NULL,
+            preview_json TEXT NOT NULL,
+            reason TEXT,
+            operator_name TEXT,
+            principal TEXT,
+            outcome_json TEXT
+        );
+        CREATE TABLE label_merge_audit (
+            audit_id TEXT PRIMARY KEY NOT NULL,
+            operation_id TEXT NOT NULL UNIQUE REFERENCES label_merge_operation(operation_id),
+            survivor_id TEXT NOT NULL,
+            retired_id TEXT NOT NULL,
+            applied_utc TEXT NOT NULL,
+            principal TEXT NOT NULL,
+            operator_name TEXT,
+            reason TEXT NOT NULL,
+            before_json TEXT NOT NULL,
+            after_json TEXT NOT NULL
+        );
+        CREATE TABLE retired_label (
+            retired_id TEXT PRIMARY KEY NOT NULL,
+            canonical_id TEXT NOT NULL REFERENCES label(label_id),
+            retired_utc TEXT NOT NULL,
+            audit_id TEXT NOT NULL REFERENCES label_merge_audit(audit_id),
+            CHECK (retired_id <> canonical_id)
+        );
+        CREATE INDEX idx_retired_label_canonical ON retired_label(canonical_id);
+        CREATE TRIGGER retired_label_no_delete BEFORE DELETE ON retired_label
+        BEGIN SELECT RAISE(ABORT, 'Retired label identities are permanent'); END;
+        CREATE TRIGGER retired_label_keep_identity BEFORE UPDATE OF retired_id ON retired_label
+        BEGIN SELECT RAISE(ABORT, 'Retired label identities are permanent'); END;
+        CREATE TRIGGER retired_label_no_active_insert BEFORE INSERT ON retired_label
+        WHEN EXISTS (SELECT 1 FROM label WHERE label_id = NEW.retired_id)
+        BEGIN SELECT RAISE(ABORT, 'Retired label ID is still active'); END;
+        CREATE TRIGGER retired_label_no_active_update BEFORE UPDATE ON retired_label
+        WHEN EXISTS (SELECT 1 FROM label WHERE label_id = NEW.retired_id)
+        BEGIN SELECT RAISE(ABORT, 'Retired label ID is still active'); END;
+        CREATE TRIGGER label_no_resurrection_insert BEFORE INSERT ON label
+        WHEN EXISTS (SELECT 1 FROM retired_label WHERE retired_id = NEW.label_id)
+        BEGIN SELECT RAISE(ABORT, 'Label ID is retired; resolve canonical identity before writing'); END;
+        CREATE TRIGGER label_no_resurrection_update BEFORE UPDATE OF label_id ON label
+        WHEN EXISTS (SELECT 1 FROM retired_label WHERE retired_id = NEW.label_id)
+        BEGIN SELECT RAISE(ABORT, 'Label ID is retired; resolve canonical identity before writing'); END;
+        CREATE TRIGGER label_preserve_redirects BEFORE DELETE ON label
+        WHEN EXISTS (SELECT 1 FROM retired_label WHERE canonical_id = OLD.label_id)
+        BEGIN SELECT RAISE(ABORT, 'Label has retired identities; merge rather than delete'); END;
+        CREATE TRIGGER label_link_version_insert AFTER INSERT ON release_label_link
+        BEGIN UPDATE label SET version = lower(hex(randomblob(16))) WHERE label_id = NEW.label_id; END;
+        CREATE TRIGGER label_link_version_update AFTER UPDATE ON release_label_link
+        BEGIN UPDATE label SET version = lower(hex(randomblob(16))) WHERE label_id IN (OLD.label_id, NEW.label_id); END;
+        CREATE TRIGGER label_link_version_delete AFTER DELETE ON release_label_link
+        BEGIN UPDATE label SET version = lower(hex(randomblob(16))) WHERE label_id = OLD.label_id; END;
+        CREATE TRIGGER label_merge_audit_no_update BEFORE UPDATE ON label_merge_audit
+        BEGIN SELECT RAISE(ABORT, 'Merge audit is append-only'); END;
+        CREATE TRIGGER label_merge_audit_no_delete BEFORE DELETE ON label_merge_audit
+        BEGIN SELECT RAISE(ABORT, 'Merge audit is append-only'); END;
+        CREATE TRIGGER embedding_no_retired_label_insert BEFORE INSERT ON embedding_document
+        WHEN lower(NEW.entity_type) = 'label' AND EXISTS (SELECT 1 FROM retired_label WHERE retired_id = NEW.entity_id)
+        BEGIN SELECT RAISE(ABORT, 'Cannot embed a retired label'); END;
+        CREATE TRIGGER embedding_no_retired_label_update BEFORE UPDATE ON embedding_document
+        WHEN lower(NEW.entity_type) = 'label' AND EXISTS (SELECT 1 FROM retired_label WHERE retired_id = NEW.entity_id)
+        BEGIN SELECT RAISE(ABORT, 'Cannot embed a retired label'); END;
+        CREATE TRIGGER embedding_work_no_retired_label_insert BEFORE INSERT ON embedding_work_item
+        WHEN lower(NEW.entity_type) = 'label' AND EXISTS (SELECT 1 FROM retired_label WHERE retired_id = NEW.entity_id)
+        BEGIN SELECT RAISE(ABORT, 'Cannot queue a retired label'); END;
+        CREATE TRIGGER embedding_work_no_retired_label_update BEFORE UPDATE ON embedding_work_item
+        WHEN lower(NEW.entity_type) = 'label' AND EXISTS (SELECT 1 FROM retired_label WHERE retired_id = NEW.entity_id)
+        BEGIN SELECT RAISE(ABORT, 'Cannot queue a retired label'); END;
+        CREATE TRIGGER label_link_no_retired_insert BEFORE INSERT ON release_label_link
+        WHEN EXISTS (SELECT 1 FROM retired_label WHERE retired_id = NEW.label_id)
+        BEGIN SELECT RAISE(ABORT, 'Release label ID is retired; resolve canonical identity before writing'); END;
+        CREATE TRIGGER label_link_no_retired_update BEFORE UPDATE ON release_label_link
+        WHEN EXISTS (SELECT 1 FROM retired_label WHERE retired_id = NEW.label_id)
+        BEGIN SELECT RAISE(ABORT, 'Release label ID is retired; resolve canonical identity before writing'); END;
+        CREATE TRIGGER label_ref_no_retired_insert BEFORE INSERT ON label_external_ref
+        WHEN EXISTS (SELECT 1 FROM retired_label WHERE retired_id = NEW.label_id)
+        BEGIN SELECT RAISE(ABORT, 'Reference label ID is retired; resolve canonical identity before writing'); END;
+        CREATE TRIGGER label_ref_no_retired_update BEFORE UPDATE ON label_external_ref
+        WHEN EXISTS (SELECT 1 FROM retired_label WHERE retired_id = NEW.label_id)
+        BEGIN SELECT RAISE(ABORT, 'Reference label ID is retired; resolve canonical identity before writing'); END;
+        CREATE TRIGGER label_alias_no_retired_insert BEFORE INSERT ON label_alias
+        WHEN EXISTS (SELECT 1 FROM retired_label WHERE retired_id = NEW.label_id)
+        BEGIN SELECT RAISE(ABORT, 'Alias label ID is retired; resolve canonical identity before writing'); END;
+        CREATE TRIGGER label_alias_no_retired_update BEFORE UPDATE ON label_alias
+        WHEN EXISTS (SELECT 1 FROM retired_label WHERE retired_id = NEW.label_id)
+        BEGIN SELECT RAISE(ABORT, 'Alias label ID is retired; resolve canonical identity before writing'); END;
+        """;
 
     private const string LabelAggregateVersion = """
         ALTER TABLE label ADD COLUMN version TEXT NOT NULL DEFAULT '';

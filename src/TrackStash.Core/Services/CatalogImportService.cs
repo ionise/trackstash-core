@@ -73,7 +73,7 @@ public sealed class CatalogImportService
             foreach (var row in rows.Where(r => string.Equals(r.Type, entityType, StringComparison.OrdinalIgnoreCase)))
             {
                 var result = request.DryRun
-                    ? ValidateRowDryRun(row)
+                    ? await ValidateRowDryRunAsync(row, cancellationToken).ConfigureAwait(false)
                     : entityType switch
                     {
                         "label"     => await ProcessLabelRowAsync(row, labelMap, cancellationToken).ConfigureAwait(false),
@@ -342,11 +342,13 @@ public sealed class CatalogImportService
         string? refValue, Dictionary<string, string> sessionMap, List<string> warnings, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(refValue)) return null;
+        await using var uow = await _provider.BeginUnitOfWorkAsync(ct).ConfigureAwait(false);
+        var identity = await uow.Labels.ResolveIdentityAsync(refValue, ct).ConfigureAwait(false);
+        if (identity.IsRetired) throw new RetiredLabelException(refValue, identity.CanonicalId!);
         if (sessionMap.TryGetValue(refValue, out var id)) return id;
         var norm = EntityNameNormalizer.NormalizeStrict(refValue);
         if (!string.IsNullOrWhiteSpace(norm) && sessionMap.TryGetValue(norm, out id)) return id;
 
-        await using var uow = await _provider.BeginUnitOfWorkAsync(ct).ConfigureAwait(false);
         var byId = await uow.Labels.GetByIdAsync(refValue, ct).ConfigureAwait(false);
         if (byId is not null) return byId.Id;
         if (!string.IsNullOrWhiteSpace(norm))
@@ -409,6 +411,19 @@ public sealed class CatalogImportService
 
     private static CatalogImportRowResult FailRow(CsvRow row, string entityType, string error) =>
         new(row.RowNumber, entityType, null, null, false, error, Array.Empty<string>());
+
+    private async Task<CatalogImportRowResult> ValidateRowDryRunAsync(CsvRow row, CancellationToken ct)
+    {
+        var result = ValidateRowDryRun(row);
+        if (!result.Success) return result;
+        var id = row.Type?.ToLowerInvariant() switch { "label" => row.Id, "release" => row.LabelRef, _ => null };
+        if (string.IsNullOrWhiteSpace(id)) return result;
+        await using var unit = await _provider.BeginUnitOfWorkAsync(ct).ConfigureAwait(false);
+        var identity = await unit.Labels.ResolveIdentityAsync(id, ct).ConfigureAwait(false);
+        return identity.IsRetired
+            ? FailRow(row, row.Type!, $"Label '{id}' is retired; review canonical label '{identity.CanonicalId}'.")
+            : result;
+    }
 
     private static CatalogImportRowResult ValidateRowDryRun(CsvRow row)
     {

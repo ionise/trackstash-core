@@ -43,7 +43,7 @@ internal sealed partial class SqliteLabelRepository : ILabelRepository
             FROM label l
             JOIN label_external_ref r ON r.label_id = l.label_id
             WHERE r.source = @source AND r.external_id = @externalId
-            LIMIT 1
+            LIMIT 2
             """;
         cmd.Parameters.AddWithValue("@source", source);
         cmd.Parameters.AddWithValue("@externalId", externalId);
@@ -52,7 +52,10 @@ internal sealed partial class SqliteLabelRepository : ILabelRepository
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        return ReadLabel(reader);
+        var label = ReadLabel(reader);
+        if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            throw new InvalidOperationException($"Ambiguous label provider reference '{source}/{externalId}'. Review the matching labels.");
+        return label;
     }
 
     public async ValueTask<Label?> GetByNormalizedNameAsync(string normalizedName, CancellationToken cancellationToken = default)
@@ -86,6 +89,7 @@ internal sealed partial class SqliteLabelRepository : ILabelRepository
     {
         ArgumentNullException.ThrowIfNull(label);
         ArgumentException.ThrowIfNullOrWhiteSpace(label.Id);
+        await RejectRetiredAsync(label.Id, cancellationToken).ConfigureAwait(false);
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = _transaction;
         var conflictAction = createOnly ? "ON CONFLICT (label_id) DO NOTHING" : """
@@ -118,6 +122,24 @@ internal sealed partial class SqliteLabelRepository : ILabelRepository
         foreach (var alias in label.Aliases)
             await UpsertAliasAsync(label.Id, alias, cancellationToken).ConfigureAwait(false);
         return true;
+    }
+
+    public async ValueTask<LabelIdentity> ResolveIdentityAsync(string labelId, CancellationToken cancellationToken = default)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.Transaction = _transaction;
+        cmd.CommandText = """
+            SELECT label_id FROM label WHERE label_id = @id
+            UNION ALL SELECT canonical_id FROM retired_label WHERE retired_id = @id
+            """;
+        cmd.Parameters.AddWithValue("@id", labelId);
+        return new(labelId, (string?)await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
+    }
+
+    private async ValueTask RejectRetiredAsync(string labelId, CancellationToken cancellationToken)
+    {
+        var identity = await ResolveIdentityAsync(labelId, cancellationToken).ConfigureAwait(false);
+        if (identity.IsRetired) throw new RetiredLabelException(labelId, identity.CanonicalId!);
     }
 
     private async ValueTask UpsertExternalRefAsync(string labelId, EntityReference externalRef, CancellationToken cancellationToken)
@@ -186,7 +208,7 @@ internal sealed partial class SqliteLabelRepository : ILabelRepository
         using (var cmd = _connection.CreateCommand())
         {
             cmd.Transaction = _transaction;
-            cmd.CommandText = "SELECT value, normalized_value, is_primary FROM label_alias WHERE label_id = @id";
+            cmd.CommandText = "SELECT value, normalized_value, is_primary FROM label_alias WHERE label_id = @id ORDER BY value";
             cmd.Parameters.AddWithValue("@id", label.Id);
 
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -205,7 +227,7 @@ internal sealed partial class SqliteLabelRepository : ILabelRepository
         using (var cmd = _connection.CreateCommand())
         {
             cmd.Transaction = _transaction;
-            cmd.CommandText = "SELECT source, external_id, is_primary, last_seen_utc, payload_json FROM label_external_ref WHERE label_id = @id";
+            cmd.CommandText = "SELECT source, external_id, is_primary, last_seen_utc, payload_json FROM label_external_ref WHERE label_id = @id ORDER BY source, external_id";
             cmd.Parameters.AddWithValue("@id", label.Id);
 
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -522,6 +544,12 @@ internal sealed class SqliteReleaseRepository : IReleaseRepository
 
     public async ValueTask UpsertAsync(Release release, CancellationToken cancellationToken = default)
     {
+        var labels = new SqliteLabelRepository(_connection, _transaction);
+        foreach (var link in release.LabelLinks)
+        {
+            var identity = await labels.ResolveIdentityAsync(link.LabelId, cancellationToken).ConfigureAwait(false);
+            if (identity.IsRetired) throw new RetiredLabelException(link.LabelId, identity.CanonicalId!);
+        }
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = _transaction;
         cmd.CommandText = """

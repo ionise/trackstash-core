@@ -17,12 +17,11 @@ public sealed class SqliteMigrationRunner : IMigrationRunner
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-        await EnsureMigrationTableAsync(connection, cancellationToken).ConfigureAwait(false);
-
         using var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT COALESCE(MAX(version), 0) FROM schema_migration";
-        var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-        return Convert.ToInt32(result);
+        cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migration'";
+        if (Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false)) == 0)
+            return 0;
+        return await GetVersionFromConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<MigrationResult> ApplyPendingMigrationsAsync(CancellationToken cancellationToken = default)

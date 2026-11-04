@@ -16,6 +16,7 @@ internal sealed class SqliteUnitOfWork : IUnitOfWork
         _transaction = transaction;
 
         Labels = new SqliteLabelRepository(connection, transaction);
+        LabelMerges = new SqliteLabelMergeRepository(connection, transaction);
         Artists = new SqliteArtistRepository(connection, transaction);
         Releases = new SqliteReleaseRepository(connection, transaction);
         Recordings = new SqliteRecordingRepository(connection, transaction);
@@ -25,6 +26,7 @@ internal sealed class SqliteUnitOfWork : IUnitOfWork
     }
 
     public ILabelRepository Labels { get; }
+    public ILabelMergeRepository LabelMerges { get; }
     public IArtistRepository Artists { get; }
     public IReleaseRepository Releases { get; }
     public IRecordingRepository Recordings { get; }
