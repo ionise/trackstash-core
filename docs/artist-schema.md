@@ -13,6 +13,10 @@ Key differences from the actual migration:
 
 See [delete-semantics.md](delete-semantics.md) for the delete rules and full reconciliation note.
 
+The next reviewed workflow is specified in [purchase-to-release import design](../../trackstash-catalog/docs/purchase-release-import-design.md). It starts with structured release/track credits, not a wholesale Artist import. Provider objects are identity candidates; compound names are not split by punctuation, normalized names are not unique canonical keys, and release/listing/recording credits retain distinct scopes and multiple roles. That design identifies required changes to the simplified schema; they are not implemented here yet.
+
+Compound provider identities may be accepted with explicit unresolved status, retaining stable IDs and original credits. The foundation must support a later reviewed split into multiple canonical Artists, with per-occurrence credit resolution, preserved source identity/history and no duplication of the compound provider ID across targets. This is not an ordinary merge redirect. Canonical embedding documents and dependent invalidation are specified in the same import design; generation occurs asynchronously after accepted changes commit.
+
 Related documents:
 
 - [label-schema.md](label-schema.md) for label-domain tables.

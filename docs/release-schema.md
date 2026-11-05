@@ -13,6 +13,10 @@ Key differences from the actual migration:
 
 See [delete-semantics.md](delete-semantics.md) for the delete rules and full reconciliation note.
 
+The next reviewed workflow is specified in [purchase-to-release import design](../../trackstash-catalog/docs/purchase-release-import-design.md). It imports a complete source release through a preview, reuses reviewed labels and Artist identities, and preserves track placements/credits without claiming media ownership. Source order is not automatically official track numbering; generic Beatport "Release" does not determine release type. Required metadata/credit/placement/concurrency changes remain design only.
+
+Official numbering is optional at import. Manual display reordering must preserve stable placements, source sequence and independently evidenced official numbers; reimport must not silently reset curator order. The same design defines versioned canonical embedding documents and asynchronous post-commit generation.
+
 Related documents:
 
 - [label-schema.md](label-schema.md) for label-domain tables.

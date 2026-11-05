@@ -14,6 +14,8 @@ Key differences from the actual migration:
 
 See [delete-semantics.md](delete-semantics.md) for the delete rules and full reconciliation note.
 
+The [purchase-to-release import design](../../trackstash-catalog/docs/purchase-release-import-design.md) applies the identity policy below to a complete source release. It proposes stable repeated release placements, provider track-listing bindings and distinct credit scopes. Different provider track IDs or matching ISRCs do not automatically establish one master; source order and release dates remain explicitly sourced. These extensions are design only, not a new canonical track entity or media-resolution implementation.
+
 Related documents:
 
 - [label-schema.md](label-schema.md) for label-domain tables.
