@@ -10,11 +10,12 @@ namespace TrackStash.Core.Sqlite;
 internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, SqliteTransaction transaction) : ILabelMergeRepository
 {
     private readonly SqliteLabelRepository _labels = new(connection, transaction);
-    private const int PlanFormatVersion = 3;
+    private const int PlanFormatVersion = 4;
     private sealed record Plan(Label Survivor, Label Retired, Label Combined, MergeReleaseLink[] Links,
-        Dictionary<string, List<Dictionary<string, object?>>> Rows, string[] Blockers, ArtworkEntry[] Artwork)
+        Dictionary<string, List<Dictionary<string, object?>>> Rows, string[] Blockers, ArtworkEntry[] Artwork,
+        LabelRelationship[] Relationships)
     {
-        public string Snapshot => JsonSerializer.Serialize(new { PlanFormatVersion, Survivor, Retired, Combined, Links, Rows, Blockers, Artwork });
+        public string Snapshot => JsonSerializer.Serialize(new { PlanFormatVersion, Survivor, Retired, Combined, Links, Rows, Blockers, Artwork, Relationships });
         public string Hash => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Snapshot)));
     }
 
@@ -35,8 +36,9 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
              "Survivor name and sort name are retained; transferred aliases are non-primary.",
              "Operator attribution is unverified; the API key represents a shared local credential.",
              "Compatible profile fields and links are combined; conflicting profile values block apply. Personal favourites are combined.",
-             "Survivor artwork comes first; retired artwork is appended. Survivor preference wins, otherwise retired preference carries forward. Assets and provenance are retained."],
-            Profile: plan.Combined.Profile, Artwork: plan.Artwork);
+             "Survivor artwork comes first; retired artwork is appended. Survivor preference wins, otherwise retired preference carries forward. Assets and provenance are retained.",
+             "Relationships transfer in both directions. Equal edges coalesce only with matching source, evidence URL and notes. Self-links, imprint cycles and conflicting evidence block apply."],
+            Profile: plan.Combined.Profile, Artwork: plan.Artwork, Relationships: plan.Relationships);
         await ExecuteAsync("""
             INSERT INTO label_merge_operation(operation_id, survivor_id, retired_id, version, expires_utc, state_hash, preview_json)
             VALUES (@op, @s, @r, @version, @expires, @hash, @preview)
@@ -82,6 +84,10 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
         await ExecuteAsync("SAVEPOINT label_merge_apply", cancellationToken).ConfigureAwait(false);
         try
         {
+            await ExecuteAsync("DELETE FROM label_relationship WHERE from_label_id IN (@s,@r) OR to_label_id IN (@s,@r)",
+                cancellationToken, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
+            var relationships = new SqliteLabelRelationshipRepository(connection, transaction);
+            foreach (var edge in plan.Relationships) await relationships.InsertAsync(edge, cancellationToken).ConfigureAwait(false);
             await ExecuteAsync("DELETE FROM label_alias WHERE label_id IN (@s, @r); DELETE FROM label_external_ref WHERE label_id IN (@s, @r);",
                 cancellationToken, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
             await _labels.UpsertAsync(plan.Combined with { UpdatedUtc = now }, cancellationToken).ConfigureAwait(false);
@@ -134,7 +140,7 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
                 """, cancellationToken, ("audit", outcome.AuditId), ("op", operationId), ("s", survivorId),
                 ("r", retiredId), ("now", now.ToString("O")), ("principal", principal), ("operator", operatorName),
                 ("reason", reason), ("before", plan.Snapshot),
-                ("after", JsonSerializer.Serialize(new { PlanFormatVersion, Label = after, plan.Links, outcome,
+                ("after", JsonSerializer.Serialize(new { PlanFormatVersion, Label = after, plan.Links, plan.Relationships, outcome,
                     Embeddings = "Both invalidated; known models queued for survivor regeneration", RedirectTarget = survivorId })),
                 ("outcome", JsonSerializer.Serialize(outcome))).ConfigureAwait(false);
             await ExecuteAsync("RELEASE label_merge_apply", cancellationToken).ConfigureAwait(false);
@@ -159,6 +165,28 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
         if (survivor is null || retired is null) return null;
         var blockers = new List<string>();
         var rows = new Dictionary<string, List<Dictionary<string, object?>>>(StringComparer.Ordinal);
+        // The entire graph participates in the digest: a distant edge can introduce an imprint cycle.
+        rows["label_relationship"] = await RowsAsync("SELECT * FROM label_relationship ORDER BY relationship_id", ct).ConfigureAwait(false);
+        var allRelationships = await new SqliteLabelRelationshipRepository(connection, transaction).ReadAllAsync(ct).ConfigureAwait(false);
+        var affected = allRelationships.Where(e => e.FromLabelId == survivorId || e.FromLabelId == retiredId ||
+            e.ToLabelId == survivorId || e.ToLabelId == retiredId).ToArray();
+        var combinedRelationships = new List<LabelRelationship>();
+        foreach (var group in affected.OrderBy(e => e.FromLabelId == retiredId || e.ToLabelId == retiredId ? 1 : 0)
+            .ThenBy(e => e.Id, StringComparer.Ordinal)
+            .Select(e => e with { FromLabelId = e.FromLabelId == retiredId ? survivorId : e.FromLabelId,
+                ToLabelId = e.ToLabelId == retiredId ? survivorId : e.ToLabelId })
+            .GroupBy(e => (e.FromLabelId, e.ToLabelId, e.Type)))
+        {
+            var kept = group.First();
+            if (kept.FromLabelId == kept.ToLabelId) blockers.Add("Merge would create a label self-relationship. Remove or reconcile the relationship before merging.");
+            if (group.Any(e => e.Source != kept.Source || e.SourceUrl != kept.SourceUrl || e.Notes != kept.Notes))
+                blockers.Add("Overlapping label relationships have conflicting source, evidence URL or notes. Reconcile them before merging.");
+            combinedRelationships.Add(kept);
+        }
+        var finalGraph = allRelationships.Except(affected).Concat(combinedRelationships).ToArray();
+        if (LabelRelationshipRules.HasImprintCycle(finalGraph)) blockers.Add("Merge would create an imprint hierarchy cycle.");
+        if (finalGraph.GroupBy(e => e.FromLabelId).Any(g => g.Count() > LabelRelationshipRules.MaximumOutgoing))
+            blockers.Add("Merged relationships exceed the 100 outgoing relationships per label limit.");
         foreach (var table in new[] { "label", "label_alias", "label_external_ref", "release_label_link" })
             rows[table] = await RowsAsync($"SELECT * FROM {table} WHERE label_id IN (@s, @r) ORDER BY {(table == "label_external_ref" ? "1, 2, 3" : "1, 2")}",
                 ct, ("s", survivorId), ("r", retiredId)).ConfigureAwait(false);
@@ -233,7 +261,7 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
             Aliases = aliases.Values.OrderBy(a => a.Value, StringComparer.Ordinal).ToArray(),
             ExternalReferences = references,
             Profile = CombineProfiles(survivor.Profile, retired.Profile, blockers),
-        }, links.ToArray(), rows, blockers.ToArray(), combinedArtwork);
+        }, links.ToArray(), rows, blockers.ToArray(), combinedArtwork, combinedRelationships.ToArray());
     }
 
     private async Task InspectUnknownDependenciesAsync(Dictionary<string, List<Dictionary<string, object?>>> rows,
@@ -245,7 +273,7 @@ internal sealed class SqliteLabelMergeRepository(SqliteConnection connection, Sq
             var table = (string)tableRow["name"]!;
             if (table is "label_alias" or "label_external_ref" or "release_label_link" or "retired_label"
                 or "label_profile" or "label_web_link" or "label_profile_revision" or "label_observation"
-                or "label_artwork_link" or "label_artwork_revision") continue;
+                or "label_artwork_link" or "label_artwork_revision" or "label_relationship") continue;
             var foreignKeys = await RowsAsync($"PRAGMA foreign_key_list({Quote(table)})", ct).ConfigureAwait(false);
             foreach (var fk in foreignKeys.Where(f => (string?)f["table"] == "label"))
             {

@@ -139,7 +139,7 @@ public sealed class ArtworkTests : IAsyncLifetime
     {
         await PrepareLegacyAsync();
         var result = await Provider.Migrations.ApplyPendingMigrationsAsync();
-        Assert.Equal(6, result.CurrentVersion);
+        Assert.Equal(7, result.CurrentVersion);
         await using var unit = await Provider.BeginUnitOfWorkAsync();
         var gallery = (await unit.Artwork.GetLabelGalleryAsync("survivor"))!;
         var item = Assert.Single(gallery.Items);
@@ -182,11 +182,17 @@ public sealed class ArtworkTests : IAsyncLifetime
     }
 
     private Task PrepareLegacyAsync() => ExecuteAsync("""
+        DROP TRIGGER relationship_history_insert;
+        DROP TRIGGER relationship_history_update;
+        DROP TRIGGER relationship_history_delete;
+        DROP TRIGGER relationship_cycle_insert;
+        DROP TRIGGER relationship_cycle_update;
+        DROP TABLE label_relationship_revision;
         DROP TABLE label_artwork_link;
         DROP TABLE label_artwork_revision;
         DROP TRIGGER artwork_asset_no_delete;
         DROP TABLE artwork_asset;
-        DELETE FROM schema_migration WHERE version=6;
+        DELETE FROM schema_migration WHERE version>=6;
         CREATE TABLE label_artwork(
             artwork_id TEXT PRIMARY KEY,label_id TEXT REFERENCES label(label_id),role TEXT,mime_type TEXT,content_hash TEXT,
             content BLOB,source_url TEXT,attribution TEXT,usage_rights TEXT,created_utc TEXT);

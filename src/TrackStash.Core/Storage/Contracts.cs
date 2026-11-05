@@ -25,6 +25,7 @@ public interface IUnitOfWork : IAsyncDisposable
     ILabelRepository Labels { get; }
 
     ILabelMergeRepository LabelMerges { get; }
+    ILabelRelationshipRepository LabelRelationships { get; }
 
     IArtworkRepository Artwork { get; }
 

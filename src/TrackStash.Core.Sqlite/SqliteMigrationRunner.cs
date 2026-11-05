@@ -49,6 +49,10 @@ public sealed class SqliteMigrationRunner : IMigrationRunner
                 cmd.CommandText = migration.Sql;
                 await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
+                if (migration.Version == 7 &&
+                    LabelRelationshipRules.HasImprintCycle(await new SqliteLabelRelationshipRepository(connection, tx).ReadAllAsync(cancellationToken).ConfigureAwait(false)))
+                    throw new InvalidDataException("Existing imprint relationships form a cycle. Migration 7 was rolled back; review the relationships before retrying.");
+
                 if (migration.Version == 6)
                 {
                     using var legacy = connection.CreateCommand();

@@ -12,7 +12,61 @@ internal static partial class Migrations
         new SchemaMigration(4, "reviewed-label-merges", ReviewedLabelMerges),
         new SchemaMigration(5, "label-profiles-and-enrichment-foundation", LabelProfiles + LabelProfileGuards()),
         new SchemaMigration(6, "shared-artwork-and-label-galleries", SharedArtwork),
+        new SchemaMigration(7, "reviewed-label-relationships", LabelRelationshipWorkflow()),
     ];
+
+    private static string LabelRelationshipWorkflow()
+    {
+        string Snapshot(string row) => "json_object(" + string.Join(",", new[]
+        {
+            "relationship_id", "from_label_id", "to_label_id", "relationship_type", "source", "source_url", "notes", "created_utc",
+        }.Select(c => $"'{c}',{row}.{c}")) + ")";
+        var sql = new System.Text.StringBuilder("""
+            CREATE TABLE label_relationship_revision(
+                revision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recorded_utc TEXT NOT NULL,
+                action TEXT NOT NULL,
+                before_json TEXT,
+                after_json TEXT
+            );
+            CREATE TRIGGER relationship_revision_no_update BEFORE UPDATE ON label_relationship_revision
+            BEGIN SELECT RAISE(ABORT,'Relationship history is immutable'); END;
+            CREATE TRIGGER relationship_revision_no_delete BEFORE DELETE ON label_relationship_revision
+            BEGIN SELECT RAISE(ABORT,'Relationship history is permanent'); END;
+            """);
+        sql.AppendLine($"""
+            INSERT INTO label_relationship_revision(recorded_utc,action,before_json,after_json)
+            SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now'),'baseline',NULL,{Snapshot("r")}
+            FROM label_relationship r ORDER BY relationship_id;
+            """);
+        foreach (var operation in new[] { "INSERT", "UPDATE", "DELETE" })
+        {
+            sql.AppendLine($"""
+                CREATE TRIGGER relationship_history_{operation.ToLowerInvariant()} AFTER {operation} ON label_relationship
+                BEGIN INSERT INTO label_relationship_revision(recorded_utc,action,before_json,after_json)
+                VALUES(strftime('%Y-%m-%dT%H:%M:%fZ','now'),'{operation.ToLowerInvariant()}',
+                    {(operation == "INSERT" ? "NULL" : Snapshot("OLD"))},
+                    {(operation == "DELETE" ? "NULL" : Snapshot("NEW"))}); END;
+                """);
+            if (operation == "DELETE") continue;
+            sql.AppendLine($"""
+                CREATE TRIGGER relationship_cycle_{operation.ToLowerInvariant()} BEFORE {operation} ON label_relationship
+                WHEN NEW.relationship_type='imprint_of'
+                BEGIN
+                    SELECT RAISE(ABORT,'Imprint relationships cannot form a cycle')
+                    WHERE EXISTS(
+                        WITH RECURSIVE ancestors(id) AS (
+                            SELECT NEW.to_label_id UNION
+                            SELECT r.to_label_id FROM label_relationship r JOIN ancestors a ON r.from_label_id=a.id
+                            WHERE r.relationship_type='imprint_of'
+                            {(operation == "UPDATE" ? "AND r.relationship_id<>OLD.relationship_id" : "")}
+                        ) SELECT 1 FROM ancestors WHERE id=NEW.from_label_id
+                    );
+                END;
+                """);
+        }
+        return sql.ToString();
+    }
 
     private static string LabelProfileGuards()
     {

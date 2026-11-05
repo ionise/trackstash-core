@@ -59,7 +59,7 @@ public sealed class CatalogBackupTests : IAsyncLifetime
         var path = Path.Combine(Root, result.Backup.Filename);
         var manifest = await Service.VerifyAsync(path);
         Assert.Equal(5, manifest.Files.Count);
-        Assert.Equal(6, manifest.SchemaVersion);
+        Assert.Equal(7, manifest.SchemaVersion);
         Assert.Contains(manifest.Files, f => f.Path == $"artwork/{retained.Id}/original");
         var restore = Path.Combine(_directory, "restored");
         await Service.RestoreAsync(path, restore);
@@ -71,6 +71,50 @@ public sealed class CatalogBackupTests : IAsyncLifetime
         await Assert.ThrowsAsync<IOException>(() => Service.RestoreAsync(path, restore));
         if (!OperatingSystem.IsWindows())
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
+    }
+    [Fact]
+    public async Task Schema6ArchivesRemainVerifiableAfterUpgradeAndSchema7RestoresRelationshipsAndHistory()
+    {
+        await using (var connection = new SqliteConnection($"Data Source={Database}"))
+        {
+            await connection.OpenAsync();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                DROP TRIGGER relationship_history_insert; DROP TRIGGER relationship_history_update; DROP TRIGGER relationship_history_delete;
+                DROP TRIGGER relationship_cycle_insert; DROP TRIGGER relationship_cycle_update;
+                DROP TABLE label_relationship_revision;
+                DELETE FROM schema_migration WHERE version=7;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+        var old = await Service.CreateAsync();
+        var oldPath = Path.Combine(Root, old.Backup.Filename);
+        Assert.Equal(6, (await Service.VerifyAsync(oldPath)).SchemaVersion);
+        await Provider.Migrations.ApplyPendingMigrationsAsync();
+        await using (var unit = await Provider.BeginUnitOfWorkAsync())
+        {
+            await unit.Labels.UpsertAsync(new Label { Id = "parent", Name = "Parent label" });
+            var current = (await unit.LabelRelationships.GetAsync("label"))!;
+            var parent = (await unit.Labels.GetByIdAsync("parent"))!;
+            await unit.LabelRelationships.ReplaceOutgoingAsync("label", current.Version,
+                [new(null, "parent", "imprint_of", "manual", "https://example.test", "Retained evidence", parent.Version)]);
+            await unit.CommitAsync();
+        }
+        var latest = await Service.CreateAsync();
+        var restore = Path.Combine(_directory, "relationships-restored");
+        await Service.RestoreAsync(Path.Combine(Root, latest.Backup.Filename), restore);
+        await using (var unit = await new SqliteStorageProvider(Path.Combine(restore, "catalog.db")).BeginUnitOfWorkAsync())
+            Assert.Equal("Retained evidence", Assert.Single((await unit.LabelRelationships.GetAsync("label"))!.Items).Relationship.Notes);
+        await using (var connection = new SqliteConnection($"Data Source={Path.Combine(restore, "catalog.db")}"))
+        {
+            await connection.OpenAsync();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT count(*) FROM label_relationship_revision";
+            Assert.Equal(1L, await command.ExecuteScalarAsync());
+        }
+        var oldRestore = Path.Combine(_directory, "old-schema-restored");
+        await Service.RestoreAsync(oldPath, oldRestore);
+        Assert.Equal(6, await new SqliteStorageProvider(Path.Combine(oldRestore, "catalog.db")).Migrations.GetCurrentVersionAsync());
     }
     [Fact]
     public async Task BackupFilenameIsIndependentOfCurrentCalendar()

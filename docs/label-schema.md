@@ -34,9 +34,21 @@ Schema-only foundations, with no public writers or GUI management yet:
 
 - `label_observation`: field/value JSON, provider/source identity and URL, retrieval time, attribution, licence, retention deadline, and reviewed decision. Future source providers should submit observations for review rather than silently overwrite canonical metadata.
 - Migration-5 `label_artwork` initially held local content BLOBs with source/rights. Migration 6 exports these into shared assets and managed files and removes the old table; see artwork below.
-- `label_relationship`: distinct existing label identities, child → parent `imprint_of` or label → distributor `distributed_by`, with source, source URL, and notes. Self-links and duplicate typed edges are rejected. Hierarchy/cycle validation belongs to the future write workflow; dates/territories are not included initially.
+- `label_relationship` was initially schema-only in migration 5. Migration 7 implements the reviewed workflow below; dates/territories remain excluded.
 
-Merge previews combine compatible scalar metadata, treat unknown/unreviewed as unset, OR favourites, and union URLs. Conflicting nonempty values, link kinds/title/source, or an over-limit union block apply. Manual history and observations transfer while preserving original IDs; full relational rows are included in merge audits and dependency snapshots. Migration 6 supports artwork transfer; relationship dependencies still conservatively block merge.
+Merge previews combine compatible scalar metadata, treat unknown/unreviewed as unset, OR favourites, and union URLs. Conflicting nonempty values, link kinds/title/source, or an over-limit union block apply. Manual history and observations transfer while preserving original IDs; full relational rows are included in merge audits and dependency snapshots. Migration 6 supports artwork transfer; migration 7 supports reviewed relationship transfer.
+
+## Implemented Reviewed Label Relationships
+
+[Provider-independent contracts and graph rules](../src/TrackStash.Core/Storage/LabelRelationships.cs) expose both incoming/outgoing edges, named/versioned endpoints, and conditional replacement of **outgoing only**. Child-to-parent `imprint_of` and represented-label-to-distributor `distributed_by` are the stored directions; inverse views are derived. Multiple parents/distributors are allowed. Self-links, duplicate typed edges, retired/missing targets and imprint cycles are rejected. Distribution cycles are not ownership cycles.
+
+Saves compare the original owner token and every submitted target token within the transaction. Mutations invalidate both endpoints. At most 100 outgoing edges; mandatory source up to 200 characters, optional HTTP(S) evidence URL up to 2,048 without credentials, optional notes up to 2,000. Existing edge IDs/creation dates survive metadata edits. Savepoints preserve edges/history/tokens on failure even if a caller commits afterward.
+
+Forward migration 7 adds `label_relationship_revision` with immutable before/after snapshots and permanent original endpoint IDs, baselines existing edges without changing their versions, and adds insert/update imprint-cycle triggers. Existing imprint cycles explicitly fail and roll back migration 7. Metadata replacements record delete/insert snapshots; direct SQL updates also have history. No public history editor or deletion is supported.
+
+Merge plans cover the full relationship graph, remap both directions, prefer survivor-owned edge identity, and coalesce matching typed edges only when source/URL/notes agree exactly. Self-links, conflicting provenance, imprint cycles and outgoing-limit overflow block apply. Transfer/history/audit/third-label version changes are atomic; unrelated graph edits stale the saved review. Catalog ZIP snapshots retain edges/history, with schema 6 archive compatibility preserved. See [API/GUI contract](../../trackstash-catalog/docs/api-design.md#reviewed-label-relationships).
+
+The separate [label groups/families design](../../trackstash-catalog/docs/label-groups-design.md) proposes distinct family and organisation identities with flat, sourced label memberships. It is not implemented: schema 7 has no group tables. Group affiliation must not be encoded as fabricated parent labels, redundant sibling edges or implicit legal ownership. Former-name history and historical imprint qualifiers are separate future concerns.
 
 Automated enrichment and a separate pluggable-provider module are deferred. Shared embedding storage exists, but label document generation, profile-edit embedding refresh, and semantic label search are not implemented. Personal notes are not an implicit embedding input.
 
