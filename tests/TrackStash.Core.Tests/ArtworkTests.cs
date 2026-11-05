@@ -41,6 +41,60 @@ public sealed class ArtworkTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ReleaseGallery_MigrationPreservesPopulatedCatalogAndRejectsCrossReleaseEntriesAndLabelRoles()
+    {
+        await ExecuteAsync("INSERT INTO release(release_id,title) VALUES('cover-release','Kept release'),('other-release','Other release')");
+        await using (var unit = await Provider.BeginUnitOfWorkAsync())
+        {
+            var asset = Asset(); await unit.Artwork.AddAssetAsync(asset);
+            var label = (await unit.Artwork.GetLabelGalleryAsync("survivor"))!;
+            await unit.Artwork.ReplaceLabelGalleryAsync("survivor", label.Version, [Entry(asset, true)]);
+            await unit.CommitAsync();
+        }
+        await ExecuteAsync("DROP TABLE release_artwork_link; DROP TABLE release_artwork_revision; DELETE FROM schema_migration WHERE version=11;");
+        var migration = await Provider.Migrations.ApplyPendingMigrationsAsync();
+        Assert.Equal(11, migration.CurrentVersion); Assert.Single(migration.AppliedMigrations);
+        await using (var unit = await Provider.BeginUnitOfWorkAsync())
+        {
+            var label = (await unit.Artwork.GetLabelGalleryAsync("survivor"))!;
+            Assert.Single(label.Items);
+            var release = (await unit.Artwork.GetReleaseGalleryAsync("cover-release"))!;
+            var entry = label.Items[0] with { Id = Guid.NewGuid().ToString("N"), Role = "cover" };
+            await Assert.ThrowsAsync<ArgumentException>(() => unit.Artwork.ReplaceReleaseGalleryAsync("cover-release", release.Version, [entry with { Role = "logo" }]).AsTask());
+            var saved = await unit.Artwork.ReplaceReleaseGalleryAsync("cover-release", release.Version, [entry]);
+            Assert.NotEqual(release.Version, saved.Gallery!.Version);
+            Assert.Equal(label.Version, (await unit.Artwork.GetLabelGalleryAsync("survivor"))!.Version);
+            var other = (await unit.Artwork.GetReleaseGalleryAsync("other-release"))!;
+            await Assert.ThrowsAsync<ArgumentException>(() => unit.Artwork.ReplaceReleaseGalleryAsync("other-release", other.Version, [entry]).AsTask());
+            Assert.Empty((await unit.Artwork.GetReleaseGalleryAsync("other-release"))!.Items);
+            await unit.CommitAsync();
+        }
+    }
+    [Fact]
+    public async Task ReleaseGallery_FailedRevisionSavepointCanBeCaughtWithoutPartialWriteWhenCallerCommits()
+    {
+        await ExecuteAsync("INSERT INTO release(release_id,title) VALUES('cover-release','Kept release')");
+        await using (var unit = await Provider.BeginUnitOfWorkAsync())
+        {
+            var asset = Asset(); await unit.Artwork.AddAssetAsync(asset);
+            var gallery = (await unit.Artwork.GetReleaseGalleryAsync("cover-release"))!;
+            await unit.Artwork.ReplaceReleaseGalleryAsync("cover-release", gallery.Version, [Entry(asset, true) with { Role = "cover" }]);
+            await unit.CommitAsync();
+        }
+        await ExecuteAsync("CREATE TRIGGER fail_revision BEFORE INSERT ON release_artwork_revision BEGIN SELECT RAISE(ABORT,'injected'); END");
+        await using (var unit = await Provider.BeginUnitOfWorkAsync())
+        {
+            var gallery = (await unit.Artwork.GetReleaseGalleryAsync("cover-release"))!;
+            await Assert.ThrowsAsync<SqliteException>(() => unit.Artwork.ReplaceReleaseGalleryAsync("cover-release", gallery.Version, []).AsTask());
+            var retained = (await unit.Artwork.GetReleaseGalleryAsync("cover-release"))!;
+            Assert.Equal(gallery.Version, retained.Version); Assert.Equal(gallery.Items, retained.Items);
+            await unit.CommitAsync();
+        }
+        await using var read = await Provider.BeginUnitOfWorkAsync();
+        Assert.Single((await read.Artwork.GetReleaseGalleryAsync("cover-release"))!.Items);
+    }
+
+    [Fact]
     public async Task Gallery_OrdersSharesAndDetachesAssetsWithHistoryAndOriginalVersionProtection()
     {
         await using var unit = await Provider.BeginUnitOfWorkAsync();
@@ -139,7 +193,7 @@ public sealed class ArtworkTests : IAsyncLifetime
     {
         await PrepareLegacyAsync();
         var result = await Provider.Migrations.ApplyPendingMigrationsAsync();
-        Assert.Equal(10, result.CurrentVersion);
+        Assert.Equal(11, result.CurrentVersion);
         await using var unit = await Provider.BeginUnitOfWorkAsync();
         var gallery = (await unit.Artwork.GetLabelGalleryAsync("survivor"))!;
         var item = Assert.Single(gallery.Items);

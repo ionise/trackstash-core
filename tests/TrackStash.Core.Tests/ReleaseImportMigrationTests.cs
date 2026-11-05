@@ -36,10 +36,11 @@ public sealed class ReleaseImportMigrationTests
                     while (await reader.ReadAsync()) names.Add(reader.GetString(0));
                 foreach (var name in names) { command.CommandText = $"DROP TRIGGER \"{name}\""; await command.ExecuteNonQueryAsync(); }
                 command.CommandText = """
+                    DROP TABLE release_artwork_link; DROP TABLE release_artwork_revision;
                     DROP TABLE release_import_binding; DROP TABLE release_import_outcome; DROP TABLE release_import_supersession;
                     DROP TABLE release_import_preview; DROP TABLE release_import_state;
                     DROP TABLE catalog_embedding_outbox; DROP TABLE catalog_embedding_source;
-                    DELETE FROM schema_migration WHERE version=10;
+                    DELETE FROM schema_migration WHERE version>=10;
                     """;
                 await command.ExecuteNonQueryAsync();
                 if (fail)
@@ -54,7 +55,7 @@ public sealed class ReleaseImportMigrationTests
                 }
             }
             var migrated = await provider.Migrations.ApplyPendingMigrationsAsync();
-            Assert.Equal(10, migrated.CurrentVersion); Assert.Single(migrated.AppliedMigrations);
+            Assert.Equal(11, migrated.CurrentVersion); Assert.Equal(2, migrated.AppliedMigrations.Count);
             await using var check = await provider.BeginUnitOfWorkAsync();
             var artist = (await check.Artists.GetByIdAsync(artistId))!;
             Assert.Equal(version, artist.Version); Assert.Equal("Preserved Artist", artist.Name); Assert.Equal("unresolved_compound", artist.IdentityStatus);

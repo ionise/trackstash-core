@@ -183,7 +183,7 @@ public sealed class CatalogFoundationTests : IAsyncLifetime
             INSERT INTO release_recording VALUES ('legacy-release','legacy-recording',1,7);
             """);
         var result = await Provider.Migrations.ApplyPendingMigrationsAsync();
-        Assert.Equal(10, result.CurrentVersion); Assert.Equal(2, result.AppliedMigrations.Count);
+        Assert.Equal(11, result.CurrentVersion); Assert.Equal(3, result.AppliedMigrations.Count);
         Assert.Empty((await Provider.Migrations.ApplyPendingMigrationsAsync()).AppliedMigrations);
         await using var unit = await Provider.BeginUnitOfWorkAsync();
         var artist = (await unit.Artists.GetByIdAsync("legacy-a"))!;
@@ -212,7 +212,7 @@ public sealed class CatalogFoundationTests : IAsyncLifetime
         Assert.Equal("Keep", await Sql("SELECT name FROM artist WHERE artist_id='old'"));
         Assert.Equal(0L, await Sql("SELECT count(*) FROM pragma_table_info('artist') WHERE name='version'"));
         await Sql("DROP TRIGGER fail_foundation_migration");
-        Assert.Equal(10, (await Provider.Migrations.ApplyPendingMigrationsAsync()).CurrentVersion);
+        Assert.Equal(11, (await Provider.Migrations.ApplyPendingMigrationsAsync()).CurrentVersion);
     }
 
     [Fact]
@@ -234,7 +234,7 @@ public sealed class CatalogFoundationTests : IAsyncLifetime
         var service = new CatalogBackupService(new SqliteCatalogSnapshotSource(Database), new ManagedArtworkStore(Path.Combine(_root, "artwork")), Path.Combine(_root, "backups"));
         var result = await service.CreateAsync();
         var archive = Path.Combine(_root, "backups", result.Backup.Filename);
-        Assert.Equal(10, (await service.VerifyAsync(archive)).SchemaVersion);
+        Assert.Equal(11, (await service.VerifyAsync(archive)).SchemaVersion);
         var restored = Path.Combine(_root, "restored");
         await service.RestoreAsync(archive, restored);
         await using var check = await new SqliteStorageProvider(Path.Combine(restored, "catalog.db")).BeginUnitOfWorkAsync();
@@ -280,7 +280,7 @@ public sealed class CatalogFoundationTests : IAsyncLifetime
         await service.RestoreAsync(archive, restored);
         var provider = new SqliteStorageProvider(Path.Combine(restored, "catalog.db"));
         Assert.Equal(8, await provider.Migrations.GetCurrentVersionAsync());
-        Assert.Equal(10, (await provider.Migrations.ApplyPendingMigrationsAsync()).CurrentVersion);
+        Assert.Equal(11, (await provider.Migrations.ApplyPendingMigrationsAsync()).CurrentVersion);
     }
 
     [Fact]

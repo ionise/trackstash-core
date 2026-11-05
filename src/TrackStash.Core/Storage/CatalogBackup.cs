@@ -189,7 +189,7 @@ public sealed partial class CatalogBackupService(
         if (manifest.FormatVersion != 1 || !Regex.IsMatch(manifest.Id ?? "", "^[a-f0-9]{32}$") ||
             !Regex.IsMatch(manifest.CatalogKey ?? "", "^[A-F0-9]{64}$") || manifest.Files is null ||
             manifest.Files.Count is < 1 or > 100_000 ||
-            !(manifest.Kind == "catalog" && manifest.SchemaVersion is 6 or 7 or 8 or 9 or 10 || manifest.Kind == "scanner" && manifest.SchemaVersion >= 0))
+            !(manifest.Kind == "catalog" && manifest.SchemaVersion is 6 or 7 or 8 or 9 or 10 or 11 || manifest.Kind == "scanner" && manifest.SchemaVersion >= 0))
             throw new InvalidDataException("Unsupported or invalid backup manifest.");
         return manifest;
     }

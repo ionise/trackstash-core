@@ -6,6 +6,53 @@ namespace TrackStash.Core.Sqlite;
 
 internal sealed class SqliteArtworkRepository(SqliteConnection connection, SqliteTransaction transaction) : IArtworkRepository
 {
+    public async ValueTask<ReleaseArtworkGallery?> GetReleaseGalleryAsync(string releaseId, CancellationToken ct = default)
+    {
+        using var version = Command("SELECT version FROM release WHERE release_id=@id", ("id", releaseId));
+        if (await version.ExecuteScalarAsync(ct).ConfigureAwait(false) is not string token) return null;
+        using var command = Command("SELECT artwork_id,asset_id,role,caption,is_preferred FROM release_artwork_link WHERE release_id=@id ORDER BY position,artwork_id", ("id", releaseId));
+        var items = new List<ArtworkEntry>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            items.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetBoolean(4)));
+        return new(releaseId, token, items);
+    }
+    public async ValueTask<ReleaseArtworkGalleryResult> ReplaceReleaseGalleryAsync(string releaseId, string expectedVersion,
+        IReadOnlyList<ArtworkEntry> items, CancellationToken ct = default, ArtworkSourceIdentity? source = null)
+    {
+        ArtworkRules.ValidateGallery(items, release: true);
+        ArtworkRules.ValidateSource(source);
+        ReleaseArtworkGalleryResult result = new(LabelUpdateStatus.NotFound);
+        await SqliteCatalogFoundationRepository.AtomicAsync(connection, transaction, async () =>
+        {
+            var before = await GetReleaseGalleryAsync(releaseId, ct).ConfigureAwait(false);
+            if (before is null) return;
+            if (before.Version != expectedVersion) { result = new(LabelUpdateStatus.Stale); return; }
+            foreach (var item in items)
+            {
+                using var owner = Command("SELECT release_id FROM release_artwork_link WHERE artwork_id=@id", ("id", item.Id));
+                if (await owner.ExecuteScalarAsync(ct).ConfigureAwait(false) is string other && other != releaseId)
+                    throw new ArgumentException("Artwork entry belongs to another release.", nameof(items));
+            }
+            using var delete = Command("DELETE FROM release_artwork_link WHERE release_id=@id", ("id", releaseId));
+            await delete.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            for (var i = 0; i < items.Count; i++)
+            {
+                var item = items[i];
+                using var insert = Command("INSERT INTO release_artwork_link VALUES(@entry,@id,@asset,@role,@caption,@position,@preferred)",
+                    ("entry", item.Id), ("id", releaseId), ("asset", item.AssetId), ("role", item.Role),
+                    ("caption", item.Caption), ("position", i), ("preferred", item.IsPreferred));
+                await insert.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+            using var audit = Command("INSERT INTO release_artwork_revision VALUES(@revision,@id,@now,@before,@after,@source)",
+                ("revision", Guid.NewGuid().ToString("N")), ("id", releaseId), ("now", DateTimeOffset.UtcNow.ToString("O")),
+                ("before", JsonSerializer.Serialize(before.Items)), ("after", JsonSerializer.Serialize(items)),
+                ("source", source is null ? null : JsonSerializer.Serialize(source)));
+            await audit.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            result = new(LabelUpdateStatus.Updated, await GetReleaseGalleryAsync(releaseId, ct).ConfigureAwait(false));
+        }, ct).ConfigureAwait(false);
+        return result;
+    }
     private SqliteCommand Command(string sql, params (string Name, object? Value)[] parameters)
     {
         var command = connection.CreateCommand();
