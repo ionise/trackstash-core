@@ -139,7 +139,7 @@ public sealed class ArtworkTests : IAsyncLifetime
     {
         await PrepareLegacyAsync();
         var result = await Provider.Migrations.ApplyPendingMigrationsAsync();
-        Assert.Equal(8, result.CurrentVersion);
+        Assert.Equal(9, result.CurrentVersion);
         await using var unit = await Provider.BeginUnitOfWorkAsync();
         var gallery = (await unit.Artwork.GetLabelGalleryAsync("survivor"))!;
         var item = Assert.Single(gallery.Items);
@@ -181,7 +181,10 @@ public sealed class ArtworkTests : IAsyncLifetime
         Assert.Empty(Directory.GetDirectories(ContentRoot));
     }
 
-    private Task PrepareLegacyAsync() => ExecuteAsync("""
+    private async Task PrepareLegacyAsync()
+    {
+        await LegacyCatalogSchema.RevertEmptyFoundationsAsync(Database);
+        await ExecuteAsync("""
         DROP TABLE label_group_membership;
         DROP TABLE label_group_membership_revision;
         DROP TABLE label_group;
@@ -203,6 +206,7 @@ public sealed class ArtworkTests : IAsyncLifetime
         INSERT INTO label_artwork VALUES('original-id','survivor','logo','image/png','legacy-hash',X'000102FF',
             'https://example.test','Owner','Restricted use','2026-11-04T00:00:00Z');
         """);
+    }
 
     [Fact]
     public async Task ManagedFiles_RejectTraversalAndGitRootsAndRemainImmutable()

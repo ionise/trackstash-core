@@ -285,6 +285,9 @@ internal sealed class SqliteArtistRepository : IArtistRepository
 
     public async ValueTask<Artist?> GetByExternalRefAsync(string source, string externalId, CancellationToken cancellationToken = default)
     {
+        if ((await new SqliteCatalogFoundationRepository(_connection, _transaction)
+            .FindReferenceOwnersAsync(CatalogEntityKind.Artist, source, externalId, cancellationToken).ConfigureAwait(false)).Count > 1)
+            throw new CatalogFoundationConflictException("Multiple Artists own this provider reference; review is required.");
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = _transaction;
         cmd.CommandText = """
@@ -301,7 +304,7 @@ internal sealed class SqliteArtistRepository : IArtistRepository
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        return ReadArtist(reader);
+        return await GetByIdAsync(reader.GetString(0), cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<Artist?> GetByNormalizedNameAsync(string normalizedName, CancellationToken cancellationToken = default)
@@ -320,10 +323,14 @@ internal sealed class SqliteArtistRepository : IArtistRepository
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        return ReadArtist(reader);
+        return await GetByIdAsync(reader.GetString(0), cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask UpsertAsync(Artist artist, CancellationToken cancellationToken = default)
+        => await SqliteCatalogFoundationRepository.AtomicAsync(_connection, _transaction,
+            () => UpsertCoreAsync(artist, cancellationToken), cancellationToken).ConfigureAwait(false);
+
+    private async ValueTask UpsertCoreAsync(Artist artist, CancellationToken cancellationToken)
     {
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = _transaction;
@@ -449,8 +456,13 @@ internal sealed class SqliteArtistRepository : IArtistRepository
             }
         }
 
+        var metadata = (await new SqliteCatalogFoundationRepository(_connection, _transaction)
+            .GetMetadataAsync(CatalogEntityKind.Artist, artist.Id, cancellationToken).ConfigureAwait(false))!;
         return artist with
         {
+            Version = metadata.Version,
+            Kind = metadata.ArtistKind,
+            IdentityStatus = metadata.IdentityStatus,
             Aliases = aliases,
             ExternalReferences = refs,
         };
@@ -489,6 +501,9 @@ internal sealed class SqliteReleaseRepository : IReleaseRepository
 
     public async ValueTask<Release?> GetByExternalRefAsync(string source, string externalId, CancellationToken cancellationToken = default)
     {
+        if ((await new SqliteCatalogFoundationRepository(_connection, _transaction)
+            .FindReferenceOwnersAsync(CatalogEntityKind.Release, source, externalId, cancellationToken).ConfigureAwait(false)).Count > 1)
+            throw new CatalogFoundationConflictException("Multiple Releases own this provider reference; review is required.");
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = _transaction;
         cmd.CommandText = """
@@ -505,7 +520,7 @@ internal sealed class SqliteReleaseRepository : IReleaseRepository
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        return ReadRelease(reader);
+        return await GetByIdAsync(reader.GetString(0), cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<Release?> GetByNormalizedTitleAndLabelAsync(string normalizedTitle, string? labelId, CancellationToken cancellationToken = default)
@@ -540,10 +555,14 @@ internal sealed class SqliteReleaseRepository : IReleaseRepository
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        return ReadRelease(reader);
+        return await GetByIdAsync(reader.GetString(0), cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask UpsertAsync(Release release, CancellationToken cancellationToken = default)
+        => await SqliteCatalogFoundationRepository.AtomicAsync(_connection, _transaction,
+            () => UpsertCoreAsync(release, cancellationToken), cancellationToken).ConfigureAwait(false);
+
+    private async ValueTask UpsertCoreAsync(Release release, CancellationToken cancellationToken)
     {
         var labels = new SqliteLabelRepository(_connection, _transaction);
         foreach (var link in release.LabelLinks)
@@ -596,12 +615,22 @@ internal sealed class SqliteReleaseRepository : IReleaseRepository
 
         foreach (var credit in release.ArtistCredits)
         {
+            if (credit.Detail is { } detail)
+            {
+                if (detail.ArtistId != credit.ArtistId || detail.CreditedName != credit.CreditName || detail.Position != credit.Position)
+                    throw new CatalogFoundationValidationException("Credit detail disagrees with its legacy projection.");
+                await new SqliteCatalogFoundationRepository(_connection, _transaction)
+                    .WriteCredit("release_artist_credit", "release_id", release.Id, detail, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+            await new SqliteCatalogFoundationRepository(_connection, _transaction)
+                .RequireLegacyCompatible("release_artist_credit", "release_id", release.Id, "artist_id", credit.ArtistId, cancellationToken).ConfigureAwait(false);
             using var creditCmd = _connection.CreateCommand();
             creditCmd.Transaction = _transaction;
             creditCmd.CommandText = """
                 INSERT INTO release_artist_credit (release_id, artist_id, credit_name, position)
                 VALUES (@releaseId, @artistId, @creditName, @position)
-                ON CONFLICT (release_id, artist_id) DO UPDATE SET
+                ON CONFLICT (release_id, artist_id) WHERE legacy=1 DO UPDATE SET
                     credit_name = excluded.credit_name,
                     position = excluded.position
                 """;
@@ -678,7 +707,7 @@ internal sealed class SqliteReleaseRepository : IReleaseRepository
         using (var cmd = _connection.CreateCommand())
         {
             cmd.Transaction = _transaction;
-            cmd.CommandText = "SELECT artist_id, credit_name, position FROM release_artist_credit WHERE release_id = @id ORDER BY COALESCE(position, 999999)";
+            cmd.CommandText = "SELECT artist_id, credit_name, position,credit_id,role,source,source_path,source_expression,evidence_json,legacy FROM release_artist_credit WHERE release_id = @id ORDER BY COALESCE(position, 999999),credit_id";
             cmd.Parameters.AddWithValue("@id", release.Id);
 
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -689,6 +718,10 @@ internal sealed class SqliteReleaseRepository : IReleaseRepository
                     ArtistId = reader.GetString(0),
                     CreditName = reader.IsDBNull(1) ? null : reader.GetString(1),
                     Position = reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                    Detail = reader.GetInt32(9) == 1 ? null : new CatalogCredit(reader.GetString(3),reader.GetString(0),
+                        reader.IsDBNull(4) ? "unknown" : reader.GetString(4),reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                        reader.IsDBNull(1) ? null : reader.GetString(1),reader.IsDBNull(5) ? null : reader.GetString(5),
+                        reader.IsDBNull(6) ? null : reader.GetString(6),reader.IsDBNull(7) ? null : reader.GetString(7),reader.IsDBNull(8) ? null : reader.GetString(8)),
                 });
             }
         }
@@ -712,8 +745,12 @@ internal sealed class SqliteReleaseRepository : IReleaseRepository
             }
         }
 
+        var metadata = (await new SqliteCatalogFoundationRepository(_connection, _transaction)
+            .GetMetadataAsync(CatalogEntityKind.Release, release.Id, cancellationToken).ConfigureAwait(false))!;
         return release with
         {
+            Version = metadata.Version, CatalogNumber = metadata.CatalogNumber, Upc = metadata.Upc,
+            PublishDate = metadata.PublishDate, NewReleaseDate = metadata.NewReleaseDate,
             ExternalReferences = refs,
             ArtistCredits = credits,
             LabelLinks = labels,
@@ -767,11 +804,14 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        return ReadRecording(reader);
+        return await GetByIdAsync(reader.GetString(0), cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<Recording?> GetByExternalRefAsync(string source, string externalId, CancellationToken cancellationToken = default)
     {
+        if ((await new SqliteCatalogFoundationRepository(_connection, _transaction)
+            .FindReferenceOwnersAsync(CatalogEntityKind.Recording, source, externalId, cancellationToken).ConfigureAwait(false)).Count > 1)
+            throw new CatalogFoundationConflictException("Multiple Recordings own this provider reference; review is required.");
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = _transaction;
         cmd.CommandText = """
@@ -788,7 +828,7 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        return ReadRecording(reader);
+        return await GetByIdAsync(reader.GetString(0), cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<Recording?> GetByNormalizedTitleAndMixNameAsync(string normalizedTitle, string? normalizedMixName, CancellationToken cancellationToken = default)
@@ -822,10 +862,14 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        return ReadRecording(reader);
+        return await GetByIdAsync(reader.GetString(0), cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask UpsertAsync(Recording recording, CancellationToken cancellationToken = default)
+        => await SqliteCatalogFoundationRepository.AtomicAsync(_connection, _transaction,
+            () => UpsertCoreAsync(recording, cancellationToken), cancellationToken).ConfigureAwait(false);
+
+    private async ValueTask UpsertCoreAsync(Recording recording, CancellationToken cancellationToken)
     {
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = _transaction;
@@ -876,12 +920,22 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
 
         foreach (var credit in recording.ArtistCredits)
         {
+            if (credit.Detail is { } detail)
+            {
+                if (detail.ArtistId != credit.ArtistId || detail.CreditedName != credit.CreditName || detail.Position != credit.Position || detail.Role != credit.Role)
+                    throw new CatalogFoundationValidationException("Credit detail disagrees with its legacy projection.");
+                await new SqliteCatalogFoundationRepository(_connection, _transaction)
+                    .WriteCredit("recording_artist_credit", "recording_id", recording.Id, detail, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+            await new SqliteCatalogFoundationRepository(_connection, _transaction)
+                .RequireLegacyCompatible("recording_artist_credit", "recording_id", recording.Id, "artist_id", credit.ArtistId, cancellationToken).ConfigureAwait(false);
             using var creditCmd = _connection.CreateCommand();
             creditCmd.Transaction = _transaction;
             creditCmd.CommandText = """
                 INSERT INTO recording_artist_credit (recording_id, artist_id, credit_name, role, position)
                 VALUES (@recordingId, @artistId, @creditName, @role, @position)
-                ON CONFLICT (recording_id, artist_id) DO UPDATE SET
+                ON CONFLICT (recording_id, artist_id) WHERE legacy=1 DO UPDATE SET
                     credit_name = excluded.credit_name,
                     role = excluded.role,
                     position = excluded.position
@@ -896,12 +950,25 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
 
         foreach (var link in recording.ReleaseLinks)
         {
+            if (link.Placement is { } placement)
+            {
+                if (placement.ReleaseId != link.ReleaseId || placement.RecordingId != recording.Id ||
+                    placement.DiscNumber != link.DiscNumber || placement.TrackNumber != link.TrackNumber)
+                    throw new CatalogFoundationValidationException("Placement disagrees with its legacy projection.");
+                var foundations = new SqliteCatalogFoundationRepository(_connection, _transaction);
+                var release = (await foundations.GetMetadataAsync(CatalogEntityKind.Release, placement.ReleaseId, cancellationToken).ConfigureAwait(false))!;
+                await foundations.SavePlacementAsync(placement, release.Version, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+            await new SqliteCatalogFoundationRepository(_connection, _transaction)
+                .RequireLegacyCompatible("release_recording", "release_id", link.ReleaseId, "recording_id", recording.Id, cancellationToken).ConfigureAwait(false);
             using var linkCmd = _connection.CreateCommand();
             linkCmd.Transaction = _transaction;
             linkCmd.CommandText = """
-                INSERT INTO release_recording (release_id, recording_id, disc_number, track_number)
-                VALUES (@releaseId, @recordingId, @discNumber, @trackNumber)
-                ON CONFLICT (release_id, recording_id) DO UPDATE SET
+                INSERT INTO release_recording (release_id, recording_id, disc_number, track_number,display_order)
+                VALUES (@releaseId, @recordingId, @discNumber, @trackNumber,
+                    (SELECT coalesce(max(display_order),0)+1 FROM release_recording WHERE release_id=@releaseId))
+                ON CONFLICT (release_id, recording_id) WHERE legacy=1 DO UPDATE SET
                     disc_number = excluded.disc_number,
                     track_number = excluded.track_number
                 """;
@@ -986,7 +1053,7 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
         using (var cmd = _connection.CreateCommand())
         {
             cmd.Transaction = _transaction;
-            cmd.CommandText = "SELECT artist_id, credit_name, role, position FROM recording_artist_credit WHERE recording_id = @id ORDER BY COALESCE(position, 999999)";
+            cmd.CommandText = "SELECT artist_id, credit_name, role, position,credit_id,source,source_path,source_expression,evidence_json,legacy FROM recording_artist_credit WHERE recording_id = @id ORDER BY COALESCE(position, 999999),credit_id";
             cmd.Parameters.AddWithValue("@id", recording.Id);
 
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -998,6 +1065,10 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
                     CreditName = reader.IsDBNull(1) ? null : reader.GetString(1),
                     Role = reader.IsDBNull(2) ? null : reader.GetString(2),
                     Position = reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                    Detail = reader.GetInt32(9) == 1 ? null : new CatalogCredit(reader.GetString(4),reader.GetString(0),
+                        reader.IsDBNull(2) ? "unknown" : reader.GetString(2),reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                        reader.IsDBNull(1) ? null : reader.GetString(1),reader.IsDBNull(5) ? null : reader.GetString(5),
+                        reader.IsDBNull(6) ? null : reader.GetString(6),reader.IsDBNull(7) ? null : reader.GetString(7),reader.IsDBNull(8) ? null : reader.GetString(8)),
                 });
             }
         }
@@ -1006,7 +1077,7 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
         using (var cmd = _connection.CreateCommand())
         {
             cmd.Transaction = _transaction;
-            cmd.CommandText = "SELECT release_id, disc_number, track_number FROM release_recording WHERE recording_id = @id";
+            cmd.CommandText = "SELECT release_id, disc_number, track_number,placement_id,legacy FROM release_recording WHERE recording_id = @id";
             cmd.Parameters.AddWithValue("@id", recording.Id);
 
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -1017,8 +1088,18 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
                     ReleaseId = reader.GetString(0),
                     DiscNumber = reader.IsDBNull(1) ? null : reader.GetInt32(1),
                     TrackNumber = reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                    Placement = reader.GetInt32(4) == 1 ? null : new ReleasePlacement(reader.GetString(3),reader.GetString(0),recording.Id,
+                        "",1,null,"source",null,null,[],[]),
                 });
             }
+        }
+        var foundations = new SqliteCatalogFoundationRepository(_connection, _transaction);
+        foreach (var releaseId in releaseLinks.Where(l => l.Placement is not null).Select(l => l.ReleaseId).Distinct().ToArray())
+        {
+            var placements = await foundations.GetPlacementsAsync(releaseId, cancellationToken).ConfigureAwait(false);
+            for (var i = 0; i < releaseLinks.Count; i++)
+                if (releaseLinks[i].Placement is { } placement && placement.ReleaseId == releaseId)
+                    releaseLinks[i] = releaseLinks[i] with { Placement = placements.Single(p => p.Id == placement.Id) };
         }
 
         var relationships = new List<RecordingRelationship>();
@@ -1044,8 +1125,10 @@ internal sealed class SqliteRecordingRepository : IRecordingRepository
             }
         }
 
+        var metadata = (await foundations.GetMetadataAsync(CatalogEntityKind.Recording, recording.Id, cancellationToken).ConfigureAwait(false))!;
         return recording with
         {
+            Version = metadata.Version, DurationMs = metadata.DurationMs,
             ExternalReferences = refs,
             ArtistCredits = credits,
             ReleaseLinks = releaseLinks,

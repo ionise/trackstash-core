@@ -36,6 +36,8 @@ public interface IUnitOfWork : IAsyncDisposable
 
     IRecordingRepository Recordings { get; }
 
+    ICatalogFoundationRepository? CatalogFoundations => null;
+
     IMediaFileRepository MediaFiles { get; }
 
     IMatchRepository Matches { get; }

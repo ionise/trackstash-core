@@ -6,14 +6,16 @@ Status: **core tables partially implemented**. The `release`, `release_external_
 
 Key differences from the actual migration:
 
-- Column names differ (`title_norm` in docs vs `normalized_name` in migration); many rich columns (bpm_min, bpm_max, catalog_number, etc.) are not yet present.
+- Column names differ (`title_norm` in docs vs `normalized_name` in migration); rich fields such as bpm_min/bpm_max remain absent.
 - `ON DELETE CASCADE` and `ON DELETE RESTRICT` described here are **not present** in the actual migration.
 - `release_artist_credit.artist_id` is described as nullable with `ON DELETE SET NULL`; the actual migration defines it as `NOT NULL` with no cascade.
 - The per-entity embedding tables are replaced by the shared `embedding_document` table.
 
 See [delete-semantics.md](delete-semantics.md) for the delete rules and full reconciliation note.
 
-The next reviewed workflow is specified in [purchase-to-release import design](../../trackstash-catalog/docs/purchase-release-import-design.md). It imports a complete source release through a preview, reuses reviewed labels and Artist identities, and preserves track placements/credits without claiming media ownership. Source order is not automatically official track numbering; generic Beatport "Release" does not determine release type. Required metadata/credit/placement/concurrency changes remain design only.
+The next reviewed workflow is specified in [purchase-to-release import design](../../trackstash-catalog/docs/purchase-release-import-design.md). It imports a complete source release through a preview, reuses reviewed labels and Artist identities, and preserves track placements/credits without claiming media ownership. Source order is not automatically official track numbering; generic Beatport "Release" does not determine release type. Reviewed import remains planned.
+
+Migration 9 implements aggregate versions, catalog number/UPC, separately named source publish/new-release dates, stable role-bearing credit occurrences with source expression/path/evidence, and first-class repeated track placements. The [foundation repository](../src/TrackStash.Core/Storage/CatalogFoundations.cs) provides conditional entity/metadata/credit/placement saves and complete-permutation manual reordering. Credit scopes remain separate; metadata date strings are valid full dates or null, not purchase dates. Existing label links remain authoritative. The migration is tested on temporary databases only; live activation requires separate approval.
 
 Official numbering is optional at import. Manual display reordering must preserve stable placements, source sequence and independently evidenced official numbers; reimport must not silently reset curator order. The same design defines versioned canonical embedding documents and asynchronous post-commit generation.
 

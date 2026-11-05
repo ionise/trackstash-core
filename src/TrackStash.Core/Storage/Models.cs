@@ -30,6 +30,9 @@ public sealed record Label : CanonicalEntity
 
 public sealed record Artist : CanonicalEntity
 {
+    public string Version { get; init; } = string.Empty;
+    public string Kind { get; init; } = "unknown";
+    public string IdentityStatus { get; init; } = "unknown";
     public string? SortName { get; init; }
 
     public IReadOnlyList<EntityRelationship> Relationships { get; init; } = Array.Empty<EntityRelationship>();
@@ -37,6 +40,11 @@ public sealed record Artist : CanonicalEntity
 
 public sealed record Release : CanonicalEntity
 {
+    public string Version { get; init; } = string.Empty;
+    public string? CatalogNumber { get; init; }
+    public string? Upc { get; init; }
+    public string? PublishDate { get; init; }
+    public string? NewReleaseDate { get; init; }
     public string? Title { get; init; }
 
     public IReadOnlyList<ReleaseArtistCredit> ArtistCredits { get; init; } = Array.Empty<ReleaseArtistCredit>();
@@ -46,6 +54,8 @@ public sealed record Release : CanonicalEntity
 
 public sealed record Recording : CanonicalEntity
 {
+    public string Version { get; init; } = string.Empty;
+    public long? DurationMs { get; init; }
     public string? Title { get; init; }
 
     public string? MixName { get; init; }
@@ -172,6 +182,7 @@ public sealed record EntityRelationship
 
 public sealed record ReleaseArtistCredit
 {
+    public CatalogCredit? Detail { get; init; }
     public required string ArtistId { get; init; }
 
     public string? CreditName { get; init; }
@@ -190,6 +201,7 @@ public sealed record ReleaseLabelLink
 
 public sealed record RecordingArtistCredit
 {
+    public CatalogCredit? Detail { get; init; }
     public required string ArtistId { get; init; }
 
     public string? CreditName { get; init; }
@@ -201,6 +213,7 @@ public sealed record RecordingArtistCredit
 
 public sealed record RecordingReleaseLink
 {
+    public ReleasePlacement? Placement { get; init; }
     public required string ReleaseId { get; init; }
 
     public int? DiscNumber { get; init; }

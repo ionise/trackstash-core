@@ -23,6 +23,7 @@ internal sealed class SqliteUnitOfWork : IUnitOfWork
         Artists = new SqliteArtistRepository(connection, transaction);
         Releases = new SqliteReleaseRepository(connection, transaction);
         Recordings = new SqliteRecordingRepository(connection, transaction);
+        CatalogFoundations = new SqliteCatalogFoundationRepository(connection, transaction);
         MediaFiles = new SqliteMediaFileRepository(connection, transaction);
         Matches = new SqliteMatchRepository(connection, transaction);
         Embeddings = new SqliteEmbeddingRepository(connection, transaction);
@@ -36,6 +37,7 @@ internal sealed class SqliteUnitOfWork : IUnitOfWork
     public IArtistRepository Artists { get; }
     public IReleaseRepository Releases { get; }
     public IRecordingRepository Recordings { get; }
+    public ICatalogFoundationRepository CatalogFoundations { get; }
     public IMediaFileRepository MediaFiles { get; }
     public IMatchRepository Matches { get; }
     public IEmbeddingRepository? Embeddings { get; }

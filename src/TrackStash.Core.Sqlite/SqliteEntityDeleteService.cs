@@ -27,6 +27,38 @@ internal sealed class SqliteEntityDeleteService : IEntityDeleteService
 
         // Analyze dependencies based on entity type
         await AnalyzeEntityDependenciesAsync(entityType, entityId, blockers, ownedCleanupTables, cancellationToken);
+        if (entityType is "artist" or "release" or "recording")
+        {
+            using var command = _connection.CreateCommand();
+            command.Transaction = _transaction;
+            command.CommandText = """
+                SELECT count(*) FROM catalog_foundation_revision
+                WHERE (entity_type=@kind AND entity_id=@id)
+                   OR (entity_type='placement' AND entity_id IN (
+                       SELECT placement_id FROM release_recording WHERE release_id=@id OR recording_id=@id))
+                """;
+            command.Parameters.AddWithValue("@kind", entityType); command.Parameters.AddWithValue("@id", entityId);
+            var history = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+            var richerState = entityType switch
+            {
+                "artist" => "SELECT count(*) FROM artist WHERE artist_id=@id AND (artist_kind<>'unknown' OR identity_status<>'unknown')",
+                "release" => """
+                    SELECT (SELECT count(*) FROM release WHERE release_id=@id AND (catalog_number IS NOT NULL OR upc IS NOT NULL OR publish_date IS NOT NULL OR new_release_date IS NOT NULL))
+                        +(SELECT count(*) FROM release_artist_credit WHERE release_id=@id AND legacy=0)
+                        +(SELECT count(*) FROM release_recording WHERE release_id=@id AND legacy=0)
+                    """,
+                _ => """
+                    SELECT (SELECT count(*) FROM recording WHERE recording_id=@id AND duration_ms IS NOT NULL)
+                        +(SELECT count(*) FROM recording_artist_credit WHERE recording_id=@id AND legacy=0)
+                        +(SELECT count(*) FROM release_recording WHERE recording_id=@id AND legacy=0)
+                    """,
+            };
+            command.CommandText = richerState;
+            history += Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+            if (history > 0)
+                blockers.Add(new DeleteBlocker { TableName = "catalog_foundation_revision", ColumnName = "entity_id",
+                    RowCount = history, Reason = "Reviewed canonical history requires lifecycle-safe snapshot/restore before deletion." });
+        }
 
         return new DeleteAnalysisResult
         {
@@ -121,6 +153,12 @@ internal sealed class SqliteEntityDeleteService : IEntityDeleteService
         string entityId,
         CancellationToken cancellationToken = default)
     {
+        if (entityType is "artist" or "release" or "recording")
+        {
+            var analysis = await AnalyzeDependenciesAsync(entityType, entityId, null!, cancellationToken).ConfigureAwait(false);
+            if (analysis.Blockers.Any(b => b.TableName == "catalog_foundation_revision"))
+                throw new CatalogFoundationConflictException("Legacy replacement cannot erase reviewed canonical credits/references or placement history.");
+        }
         var ownedCleanupTables = new List<OwnedCleanupTable>();
         await AnalyzeEntityDependenciesAsync(
             entityType,

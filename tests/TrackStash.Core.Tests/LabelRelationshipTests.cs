@@ -232,6 +232,7 @@ public sealed class LabelRelationshipTests : IAsyncLifetime
     [InlineData(true)]
     public async Task ForwardMigrationPreservesExistingEdgesAndBaselinesHistoryOrRollsBackCycles(bool cyclic)
     {
+        await LegacyCatalogSchema.RevertEmptyFoundationsAsync(_path);
         var before = await SetAsync("a", ("b", "imprint_of", "original source"));
         await SqlAsync("""
             DROP TABLE label_group_membership; DROP TABLE label_group_membership_revision;
@@ -252,7 +253,7 @@ public sealed class LabelRelationshipTests : IAsyncLifetime
         }
         else
         {
-            Assert.Equal(8, (await Provider.Migrations.ApplyPendingMigrationsAsync()).CurrentVersion);
+            Assert.Equal(9, (await Provider.Migrations.ApplyPendingMigrationsAsync()).CurrentVersion);
             var after = await GetAsync("a");
             Assert.Equal(before.Version, after.Version);
             Assert.Equal(before.Items.ToArray(), after.Items.ToArray());

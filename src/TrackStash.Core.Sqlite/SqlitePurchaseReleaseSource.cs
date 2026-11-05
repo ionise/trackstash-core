@@ -1,0 +1,297 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Microsoft.Data.Sqlite;
+using TrackStash.Core.Storage;
+
+namespace TrackStash.Core.Sqlite;
+
+/// <summary>Reads Beatport corpus/cache observations without migrations, network access or source writes.</summary>
+public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
+{
+    private const int MaxPayloadBytes = 4 * 1024 * 1024;
+    private const int MaxTracks = 2000;
+    private readonly string _connectionString;
+
+    public SqlitePurchaseReleaseSource(string databasePath)
+    {
+        if (!Path.IsPathFullyQualified(databasePath))
+            throw new ArgumentException("Source database path must be absolute.", nameof(databasePath));
+        _connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath, Mode = SqliteOpenMode.ReadOnly, Cache = SqliteCacheMode.Private,
+            Pooling = false, DefaultTimeout = 10,
+        }.ToString();
+    }
+
+    private async Task<SqliteConnection> OpenAsync(CancellationToken ct)
+    {
+        var connection = new SqliteConnection(_connectionString);
+        try { await connection.OpenAsync(ct).ConfigureAwait(false); return connection; }
+        catch (SqliteException ex)
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw new PurchaseSourceUnavailableException("The configured purchase source could not be opened.", ex);
+        }
+        catch (OperationCanceledException)
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public async ValueTask<PurchaseSourcePage<PurchaseReleaseCandidate>> QueryAsync(PurchaseReleaseQuery query, CancellationToken cancellationToken = default)
+    {
+        query.Validate();
+        await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        using var transaction = connection.BeginTransaction(deferred: true);
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            const string where = "FROM bpc_release r WHERE r.in_purchase_corpus = 1 AND r.beatport_release_id > 0 AND (@q = '' OR instr(lower(r.title), lower(@q)) > 0 OR CAST(r.beatport_release_id AS TEXT) = @q)";
+            command.Parameters.AddWithValue("@q", query.Search?.Trim() ?? "");
+            command.CommandText = "SELECT count(*) " + where;
+            var total = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), CultureInfo.InvariantCulture);
+            command.CommandText = "SELECT r.beatport_release_id, r.title, EXISTS(SELECT 1 FROM beatport_release_cache c WHERE c.beatport_release_id = r.beatport_release_id) " +
+                where + " ORDER BY r.title COLLATE NOCASE, r.beatport_release_id LIMIT @take OFFSET @skip";
+            command.Parameters.AddWithValue("@take", query.PageSize);
+            command.Parameters.AddWithValue("@skip", ((long)query.Page - 1) * query.PageSize);
+            var items = new List<PurchaseReleaseCandidate>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                items.Add(new(reader.GetInt64(0), reader.GetString(1), "corpus_flag", reader.GetBoolean(2)));
+            return new(items, total, query.Page, query.PageSize);
+        }
+        catch (SqliteException ex) { throw new PurchaseSourceUnavailableException("The purchase corpus schema could not be read.", ex); }
+    }
+
+    public async ValueTask<PurchaseReleaseInspection?> InspectAsync(long releaseId, PurchaseReleaseQuery query, CancellationToken cancellationToken = default)
+    {
+        query.Validate();
+        if (releaseId <= 0 || query.Search is not null)
+            throw new PurchaseSourceValidationException("Use a positive release ID and pagination only for inspection.");
+        await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        using var transaction = connection.BeginTransaction(deferred: true);
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "SELECT 1 FROM bpc_release WHERE beatport_release_id = @id AND in_purchase_corpus = 1";
+            command.Parameters.AddWithValue("@id", releaseId);
+            if (await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is null) return null;
+            command.CommandText = "SELECT release_json, fetched_utc FROM beatport_release_cache WHERE beatport_release_id = @id";
+            string? payload = null, fetched = null;
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    payload = reader.GetString(0); fetched = reader.GetString(1);
+                }
+            }
+            var diagnostics = new List<ReleaseSourceDiagnostic>
+            {
+                new("corpus_not_receipt", "warning", "Derived corpus flag is an entry-point hint, not receipt or media ownership proof."),
+                new("numbering_unverified", "warning", "Source sequence is display order only; official numbering is unknown."),
+                new("identity_review_required", "warning", "Source completeness does not certify canonical Artist or Recording identity."),
+            };
+            using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            void Hash(string text)
+            {
+                var bytes = Encoding.UTF8.GetBytes(text);
+                digest.AppendData(Encoding.ASCII.GetBytes(bytes.Length.ToString(CultureInfo.InvariantCulture) + ":"));
+                digest.AppendData(bytes);
+            }
+            Hash("beatport-cache-inspection-v1"); Hash(releaseId.ToString(CultureInfo.InvariantCulture));
+            Hash(payload ?? "missing"); Hash(fetched ?? "unknown");
+            using var release = Parse(payload, diagnostics, "release");
+            var root = release?.RootElement ?? default;
+            string? title = null, catalog = null, upc = null, publish = null, newRelease = null;
+            SourceReleaseLabel? label = null;
+            var credits = new List<SourceArtistCredit>();
+            var manifest = new List<long?>();
+            int? declared = null;
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (Id(root) != releaseId) Block(diagnostics, "release_identity_mismatch", "Cached release ID disagrees with the selected candidate.");
+                title = Text(root, "name");
+                if (string.IsNullOrWhiteSpace(title)) Block(diagnostics, "release_title_missing", "Release title is missing.");
+                label = Label(root);
+                if (label is null) Block(diagnostics, "label_missing", "Release label identity/name is missing or invalid.");
+                catalog = Text(root, "catalog_number"); upc = Text(root, "upc");
+                publish = Text(root, "publish_date"); newRelease = Text(root, "new_release_date");
+                credits = Credits(root, diagnostics);
+                declared = Integer(root, "track_count") is { } count && count is >= 0 and <= int.MaxValue ? (int)count : null;
+                if (declared is null) Block(diagnostics, "track_count_missing", "Declared track count is missing or invalid.");
+                if (!root.TryGetProperty("tracks", out var tracks) || tracks.ValueKind != JsonValueKind.Array)
+                    Block(diagnostics, "manifest_missing", "Release track manifest is missing or invalid.");
+                else if (tracks.GetArrayLength() > MaxTracks)
+                    Block(diagnostics, "manifest_too_large", $"Release exceeds the inspection limit of {MaxTracks} tracks.");
+                else
+                {
+                    foreach (var track in tracks.EnumerateArray())
+                    {
+                        var id = TrackUrlId(track);
+                        manifest.Add(id);
+                        if (id is null) Block(diagnostics, "invalid_track_reference", "Manifest item is not an approved Beatport track URL.", manifest.Count);
+                    }
+                    if (manifest.Count == 0) Block(diagnostics, "manifest_empty", "Release track manifest is empty.");
+                    if (declared != manifest.Count) Block(diagnostics, "track_count_mismatch", "Declared track count disagrees with the manifest.");
+                    if (manifest.OfType<long>().Distinct().Count() != manifest.Count(id => id is not null))
+                        Block(diagnostics, "duplicate_track_reference", "Release manifest contains duplicate provider track IDs.");
+                }
+            }
+            var cached = await LoadTracksAsync(connection, transaction, manifest.OfType<long>().Distinct().ToArray(), cancellationToken).ConfigureAwait(false);
+            var results = new List<SourceReleaseTrack>();
+            foreach (var id in manifest)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var position = results.Count + 1;
+                if (id is null || !cached.TryGetValue(id.Value, out var observations))
+                {
+                    Block(diagnostics, "track_payload_missing", "A manifest item has no successful full cached track payload.", position);
+                    results.Add(new(position, id, "missing", null, null, null, null, [], null));
+                    continue;
+                }
+                // All observations enter the digest; ordering is deterministic across repeated reads/pages.
+                foreach (var observation in observations) { Hash(observation.Json); Hash(observation.Timestamp); }
+                var chosen = observations[0];
+                var before = diagnostics.Count(d => d.Severity == "blocker");
+                if (observations.Select(o => o.Json).Distinct(StringComparer.Ordinal).Skip(1).Any())
+                    Block(diagnostics, "conflicting_track_payloads", "Multiple cached payloads disagree for this track ID; refresh or review the source.", position);
+                using var track = Parse(chosen.Json, diagnostics, "track", position);
+                var item = track?.RootElement ?? default;
+                var trackCredits = new List<SourceArtistCredit>();
+                if (item.ValueKind == JsonValueKind.Object)
+                {
+                    if (Id(item) != id || !item.TryGetProperty("release", out var parent) || Id(parent) != releaseId)
+                        Block(diagnostics, "track_release_mismatch", "Track/release identity disagrees with the release manifest.", position);
+                    else if (Label(parent)?.ProviderId != label?.ProviderId)
+                        Block(diagnostics, "track_label_mismatch", "Track label identity disagrees with the release label.", position);
+                    if (string.IsNullOrWhiteSpace(Text(item, "name")))
+                        Block(diagnostics, "track_title_missing", "Track title is missing.", position);
+                    trackCredits = Credits(item, diagnostics, position);
+                }
+                var status = diagnostics.Count(d => d.Severity == "blocker") == before ? "cached" : "invalid";
+                results.Add(new(position, id, status, Text(item, "name"), Text(item, "mix_name"), Text(item, "isrc"),
+                    Integer(item, "length_ms"), trackCredits, Timestamp(chosen.Timestamp, diagnostics, position)));
+            }
+            var retrieved = Timestamp(fetched, diagnostics);
+            var hash = Convert.ToHexString(digest.GetHashAndReset()).ToLowerInvariant();
+            var page = results.Skip((int)Math.Min(((long)query.Page - 1) * query.PageSize, results.Count)).Take(query.PageSize).ToArray();
+            return new(releaseId, "corpus_flag", title, label, catalog, upc, publish, newRelease, retrieved, hash,
+                !diagnostics.Any(d => d.Severity == "blocker"), declared, manifest.Count, results.Count(t => t.Status == "cached"),
+                credits, new(page, results.Count, query.Page, query.PageSize), diagnostics);
+        }
+        catch (SqliteException ex) { throw new PurchaseSourceUnavailableException("The Beatport cache schema could not be read.", ex); }
+    }
+
+    private sealed record TrackObservation(string Json, string Timestamp);
+
+    private static async Task<Dictionary<long, List<TrackObservation>>> LoadTracksAsync(SqliteConnection connection,
+        SqliteTransaction transaction, long[] ids, CancellationToken ct)
+    {
+        var result = new Dictionary<long, List<TrackObservation>>();
+        long payloadBytes = 0;
+        if (ids.Length == 0) return result;
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT json_extract(j.value, '$.id'), j.value, s.searched_utc
+            FROM beatport_isrc_lookup s,
+                 json_each(CASE WHEN json_valid(s.tracks_json) THEN
+                     CASE WHEN json_type(s.tracks_json) = 'array' THEN s.tracks_json ELSE '[]' END
+                     ELSE '[]' END) j
+            WHERE s.lookup_status = 'Success'
+              AND json_type(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END, '$.id') = 'integer'
+              AND json_extract(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END, '$.id') IN (SELECT value FROM json_each(@ids))
+            ORDER BY s.normalized_isrc, j.key
+            """;
+        command.Parameters.AddWithValue("@ids", JsonSerializer.Serialize(ids));
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            ct.ThrowIfCancellationRequested();
+            var id = reader.GetInt64(0);
+            if (!result.TryGetValue(id, out var list)) result[id] = list = [];
+            if (list.Count >= 100) throw new PurchaseSourceUnavailableException("Too many conflicting observations for one track.");
+            var json = reader.GetString(1);
+            payloadBytes += Encoding.UTF8.GetByteCount(json);
+            if (payloadBytes > 32 * 1024 * 1024)
+                throw new PurchaseSourceUnavailableException("Release inspection exceeds the supported total payload size.");
+            list.Add(new(json, reader.GetString(2)));
+        }
+        return result;
+    }
+
+    private static JsonDocument? Parse(string? payload, List<ReleaseSourceDiagnostic> diagnostics, string scope, int? position = null)
+    {
+        if (payload is null || Encoding.UTF8.GetByteCount(payload) > MaxPayloadBytes)
+        {
+            Block(diagnostics, scope + "_payload_unavailable", "Cached payload is missing or exceeds the supported size.", position);
+            return null;
+        }
+        try
+        {
+            var document = JsonDocument.Parse(payload, new JsonDocumentOptions { MaxDepth = 64 });
+            if (document.RootElement.ValueKind == JsonValueKind.Object) return document;
+            document.Dispose();
+            Block(diagnostics, scope + "_payload_invalid", "Cached payload is not a full object.", position);
+        }
+        catch (JsonException) { Block(diagnostics, scope + "_payload_invalid", "Cached payload is malformed JSON.", position); }
+        return null;
+    }
+
+    private static List<SourceArtistCredit> Credits(JsonElement root, List<ReleaseSourceDiagnostic> diagnostics, int? position = null)
+    {
+        var result = new List<SourceArtistCredit>();
+        foreach (var (field, role) in new[] { ("artists", "primary"), ("remixers", "remixer") })
+        {
+            if (!root.TryGetProperty(field, out var array) || array.ValueKind != JsonValueKind.Array)
+            {
+                Block(diagnostics, "credit_array_missing", $"Structured {field} array is missing or invalid.", position);
+                continue;
+            }
+            var order = 0;
+            foreach (var artist in array.EnumerateArray())
+            {
+                order++;
+                if (Id(artist) is not { } id || string.IsNullOrWhiteSpace(Text(artist, "name")))
+                { Block(diagnostics, "credit_identity_invalid", "Artist credit has no valid provider ID/name.", position); continue; }
+                var name = Text(artist, "name")!;
+                result.Add(new(id, name, role, order));
+                if (name.Contains(',') || name.Contains(" & ", StringComparison.Ordinal))
+                    diagnostics.Add(new("compound_name_review", "warning", "Credit punctuation may describe a genuine act or an unresolved compound; never split automatically.", position));
+            }
+        }
+        return result;
+    }
+
+    private static SourceReleaseLabel? Label(JsonElement root) =>
+        root.ValueKind == JsonValueKind.Object && root.TryGetProperty("label", out var label) &&
+        Id(label) is { } id && !string.IsNullOrWhiteSpace(Text(label, "name")) ? new(id, Text(label, "name")!) : null;
+    private static long? Id(JsonElement root) => Integer(root, "id") is { } id && id > 0 ? id : null;
+    private static long? Integer(JsonElement root, string field) => root.ValueKind == JsonValueKind.Object &&
+        root.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number) ? number : null;
+    private static string? Text(JsonElement root, string field) => root.ValueKind == JsonValueKind.Object &&
+        root.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+    private static long? TrackUrlId(JsonElement item)
+    {
+        if (item.ValueKind != JsonValueKind.String || !Uri.TryCreate(item.GetString(), UriKind.Absolute, out var uri) ||
+            uri.Scheme != "https" || uri.Host != "api.beatport.com" || !uri.IsDefaultPort ||
+            uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0) return null;
+        var parts = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 4 && parts[0] == "v4" && parts[1] == "catalog" && parts[2] == "tracks" &&
+            long.TryParse(parts[3], NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0 ? id : null;
+    }
+    private static DateTimeOffset? Timestamp(string? value, List<ReleaseSourceDiagnostic> diagnostics, int? position = null)
+    {
+        if (value is not null && DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var timestamp))
+            return timestamp;
+        diagnostics.Add(new("retrieval_time_unknown", "warning", "Cache retrieval timestamp is missing or invalid.", position));
+        return null;
+    }
+    private static void Block(List<ReleaseSourceDiagnostic> diagnostics, string code, string message, int? position = null) =>
+        diagnostics.Add(new(code, "blocker", message, position));
+}

@@ -6,6 +6,8 @@ Last updated: 2026-06-20
 This document captures the canonical delete rules for the four entity types:
 `label`, `artist`, `release`, and `recording`.
 
+Migration 9 adds richer canonical metadata, stable repeated placements/credits and permanent foundation operation history. The existing deletion/tombstone and legacy replace paths are deliberately blocked for entities with that history or richer state until they can preserve and restore it completely. This does not introduce Artist/Recording merges or deletion of reviewed provenance. Existing legacy-only behavior remains unchanged.
+
 Related documents:
 
 - [label-schema.md](label-schema.md)

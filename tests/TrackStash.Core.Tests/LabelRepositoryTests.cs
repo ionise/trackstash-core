@@ -296,11 +296,13 @@ public sealed class LabelRepositoryTests : IAsyncLifetime
                     INSERT INTO label_alias VALUES ('legacy-id', 'Original alias', NULL, 0);
                     """;
                 await cmd.ExecuteNonQueryAsync();
+                cmd.CommandText = LegacyCatalogSchema.CanonicalTablesSql;
+                await cmd.ExecuteNonQueryAsync();
             }
             var provider = new SqliteStorageProvider(path);
             var migrated = await provider.Migrations.ApplyPendingMigrationsAsync();
-            Assert.Equal(8, migrated.CurrentVersion);
-            Assert.Equal(6, migrated.AppliedMigrations.Count);
+            Assert.Equal(9, migrated.CurrentVersion);
+            Assert.Equal(7, migrated.AppliedMigrations.Count);
             Assert.Empty((await provider.Migrations.ApplyPendingMigrationsAsync()).AppliedMigrations);
             await using var unit = await provider.BeginUnitOfWorkAsync();
             var label = Assert.IsType<Label>(await unit.Labels.GetByIdAsync("legacy-id"));
