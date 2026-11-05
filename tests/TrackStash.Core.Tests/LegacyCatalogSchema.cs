@@ -37,6 +37,8 @@ internal static class LegacyCatalogSchema
         }
         command.CommandText = """
             DROP TABLE IF EXISTS release_artwork_link; DROP TABLE IF EXISTS release_artwork_revision;
+            DROP TABLE IF EXISTS artist_artwork_link; DROP TABLE IF EXISTS artist_artwork_revision;
+            DROP TABLE IF EXISTS artist_profile; DROP TABLE IF EXISTS artist_profile_revision;
             DROP TABLE release_import_outcome; DROP TABLE release_import_binding; DROP TABLE release_import_supersession; DROP TABLE release_import_preview;
             DROP TABLE release_import_state; DROP TABLE catalog_embedding_outbox; DROP TABLE catalog_embedding_source;
             DROP TABLE placement_external_ref; DROP TABLE placement_artist_credit;

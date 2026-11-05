@@ -93,4 +93,69 @@ internal sealed partial class SqliteArtistRepository
                 reader.GetString(7), reader.GetString(8), Text(9), reader.IsDBNull(10) ? null : reader.GetInt32(10)));
         return new(items, total, query.Page, query.PageSize);
     }
+    public async ValueTask<ArtistAppearancePage> AppearancesAsync(ArtistCreditQuery query, CancellationToken ct = default)
+    {
+        new ReleaseQuery(query.Page, query.PageSize).Validate();
+        using var command = _connection.CreateCommand(); command.Transaction = _transaction;
+        command.Parameters.AddWithValue("@artist", query.ArtistId);
+        var groups = query.Tracks
+            ? "SELECT release_id,recording_id,placement_id FROM credits WHERE artist_id=@artist AND scope<>'release' GROUP BY release_id,recording_id,placement_id"
+            : "SELECT release_id,NULL AS recording_id,NULL AS placement_id FROM credits WHERE artist_id=@artist AND release_id IS NOT NULL GROUP BY release_id";
+        command.CommandText = ArtistCreditsCte + $" SELECT count(*) FROM ({groups})";
+        var total = Convert.ToInt32(await command.ExecuteScalarAsync(ct).ConfigureAwait(false));
+        command.Parameters.AddWithValue("@size", query.PageSize);
+        command.Parameters.AddWithValue("@offset", ((long)query.Page - 1) * query.PageSize);
+        command.CommandText = ArtistCreditsCte + $"""
+            SELECT g.release_id,coalesce(r.title,r.name),g.recording_id,g.placement_id,coalesce(t.title,t.name),t.mix_name
+            FROM ({groups}) g LEFT JOIN release r ON r.release_id=g.release_id
+            LEFT JOIN recording t ON t.recording_id=g.recording_id
+            LEFT JOIN release_recording p ON p.placement_id=g.placement_id
+            ORDER BY coalesce(r.title,r.name,'') COLLATE NOCASE,g.release_id,p.display_order,g.placement_id,g.recording_id
+            LIMIT @size OFFSET @offset
+            """;
+        var items = new List<ArtistAppearanceListing>();
+        await using (var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            string? Text(int i) => reader.IsDBNull(i) ? null : reader.GetString(i);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                items.Add(new(Text(0), Text(1), Text(2), Text(3), Text(4), Text(5), null, [], []));
+        }
+        command.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='release_artwork_link'";
+        var hasArtwork = Convert.ToInt32(await command.ExecuteScalarAsync(ct).ConfigureAwait(false)) > 0;
+        foreach (var index in Enumerable.Range(0, items.Count))
+        {
+            var item = items[index];
+            command.Parameters.AddWithValue("@release", item.ReleaseId ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@recording", item.RecordingId ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@placement", item.PlacementId ?? (object)DBNull.Value);
+            var match = query.Tracks
+                ? "c.scope<>'release' AND c.release_id IS @release AND c.recording_id IS @recording AND c.placement_id IS @placement"
+                : "c.release_id=@release";
+            command.CommandText = ArtistCreditsCte + $"""
+                SELECT DISTINCT c.role,c.scope,c.credit_name FROM credits c
+                WHERE c.artist_id=@artist AND {match} ORDER BY c.role,c.scope,c.credit_name COLLATE NOCASE,c.credit_name
+                """;
+            var credits = new List<ArtistAppearanceCredit>();
+            await using (var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false))
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                    credits.Add(new(reader.GetString(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2)));
+            command.CommandText = """
+                SELECT l.label_id,l.name,ll.is_primary FROM release_label_link ll JOIN label l ON l.label_id=ll.label_id
+                WHERE ll.release_id=@release ORDER BY ll.is_primary DESC,l.name COLLATE NOCASE,l.label_id
+                """;
+            var labels = new List<ArtistAppearanceLabel>();
+            await using (var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false))
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                    labels.Add(new(reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1), reader.GetInt32(2) == 1));
+            string? cover = null;
+            if (hasArtwork)
+            {
+                command.CommandText = "SELECT asset_id FROM release_artwork_link WHERE release_id=@release AND role='cover' AND is_preferred=1";
+                cover = await command.ExecuteScalarAsync(ct).ConfigureAwait(false) as string;
+            }
+            items[index] = item with { Credits = credits, Labels = labels, CoverAssetId = cover };
+            command.Parameters.RemoveAt("@release"); command.Parameters.RemoveAt("@recording"); command.Parameters.RemoveAt("@placement");
+        }
+        return new(items, total, query.Page, query.PageSize);
+    }
 }

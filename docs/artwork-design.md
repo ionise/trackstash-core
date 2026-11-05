@@ -1,14 +1,36 @@
 # Shared Artwork Design Intent
 
-Status: shared assets and label galleries implemented in migration 6; managed Release covers/galleries and provider-neutral explicit attachment implemented in migration 11. Artist consumers, live provider adapters and Recording resolution remain planned.
+Status: shared assets and label galleries implemented in migration 6; managed Release covers/galleries and provider-neutral explicit attachment implemented in migration 11; Artist portrait/gallery and manual profile implemented in migration 12. Live provider adapters and Recording resolution remain planned.
 
 ## Purpose and Current State
 
 Artwork is common catalog infrastructure for labels, artists, releases, and recordings, not a separate upload implementation for each entity. Support individual logos/covers as well as ordered galleries. Labels will be the first consumer; other entity screens need not be implemented at the same time.
 
-Migration 5 originally provided only a label-specific `label_artwork` table. Migration 6 supersedes it with shared `artwork_asset` metadata, foreign-key-backed `label_artwork_link` associations, and permanent `label_artwork_revision` history. Shared asset/content contracts, label uploads, protected originals/thumbnails, galleries, and survivor-first merge transfer are implemented. Migration 11 reuses that infrastructure for Release covers. There is still no Artist gallery workflow or Recording artwork resolver.
+Migration 5 originally provided only a label-specific `label_artwork` table. Migration 6 supersedes it with shared `artwork_asset` metadata, foreign-key-backed `label_artwork_link` associations, and permanent `label_artwork_revision` history. Shared asset/content contracts, label uploads, protected originals/thumbnails, galleries, and survivor-first merge transfer are implemented. Migrations 11 and 12 reuse that infrastructure for Release covers and Artist portraits. There is still no Recording artwork resolver.
 
-This document records the broader intent and staged delivery. The concrete choices below supersede open design points for Labels and Releases; Artist artwork and Recording fallback remain design intent, not implemented capabilities.
+This document records the broader intent and staged delivery. The concrete choices below supersede open design points for Labels, Releases and Artists; Recording fallback remains design intent, not an implemented capability.
+
+## Implemented Artist Slice (schema 12)
+
+- `artist_artwork_link` and permanent `artist_artwork_revision` reuse the Release
+  schema template without changing schema-11 behavior. Ordered `portrait`/`image`
+  galleries allow at most 100 entries and one explicit preferred image.
+- Upload/replace/reorder/caption/preference/detach, rights/provenance, validation,
+  savepoint rollback and failed-upload file cleanup share the existing managed
+  implementation. Old assets/history are retained, including detached portraits.
+  Protected original/thumbnail serving is unchanged.
+- Artist headers use only a preferred `portrait`. Click/touch/keyboard on the
+  portrait or placeholder, or the separate management action, opens the manager.
+  No Label-logo/Release-cover fallback or remote-image fetching is enabled.
+- The Artist-specific manual profile and gallery share one Artist version.
+  Permanent profile revisions preserve biography/source, links, Favourite,
+  notes/review; changes stale import reviews but do not enqueue image/profile-only
+  text work. Private notes are excluded from canonical text. Legacy replacement
+  and deletion are blocked with profile/artwork data or permanent history.
+- Catalog backups accept schemas 6-12 and retain all managed assets/history.
+  Browsing remains available on schema 9-11; profile/artwork requires 12.
+  Migration is additive, rehearsed only on temporary catalogs. A live upgrade
+  needs separate verified backup, rehearsal and approval.
 
 ## Implemented Release Slice (schema 11)
 
@@ -19,7 +41,7 @@ This document records the broader intent and staged delivery. The concrete choic
 - Candidates contain metadata, an HTTPS source URL and opaque release-scoped candidate/revision IDs. The browser does not load remote image URLs or submit arbitrary URLs for attachment. Attachment refreshes the candidate identity, checks the original Release token, requires explicit release-match/rights confirmation, and stores a validated managed copy with immutable provenance. Future adapters must restrict download/redirect destinations and credentials, enforce response limits/timeouts and respect provider terms; candidates are not proof of usage rights.
 - Release deletion and legacy YAML replacement remain blocked when associations or permanent artwork history exist. Portable artwork packaging/export and Recording inheritance remain separate work.
 - Migration 11 adds tables/triggers without replacing existing entities/assets. Browsing remains available on schema 9/10; artwork routes explicitly require 11. Tests use temporary databases only. Live upgrade requires separate backup, rehearsal and approval; the API never migrates automatically.
-- Catalog backups accept schemas 6-11 and include all managed assets, including release covers and replaced/detached history. Restore preserves the archived schema.
+- Catalog backups accept schemas 6-12 and include all managed assets, including release covers and replaced/detached history. Restore preserves the archived schema.
 
 ## Implemented Label Slice
 

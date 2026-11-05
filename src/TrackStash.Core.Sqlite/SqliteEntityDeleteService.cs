@@ -27,6 +27,14 @@ internal sealed class SqliteEntityDeleteService : IEntityDeleteService
 
         // Analyze dependencies based on entity type
         await AnalyzeEntityDependenciesAsync(entityType, entityId, blockers, ownedCleanupTables, cancellationToken);
+        if (entityType == "artist")
+        {
+            using var profile = _connection.CreateCommand(); profile.Transaction = _transaction;
+            profile.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='artist_profile'";
+            if (Convert.ToInt32(await profile.ExecuteScalarAsync(cancellationToken)) > 0)
+                foreach (var table in new[] { "artist_profile", "artist_profile_revision", "artist_artwork_link", "artist_artwork_revision" })
+                    await CountAndAddBlockerAsync(table, "artist_id", entityId, "Artist profile/artwork requires lifecycle-safe restore.", blockers, cancellationToken);
+        }
         if (entityType == "release")
         {
             using var artwork = _connection.CreateCommand(); artwork.Transaction = _transaction;
@@ -166,7 +174,8 @@ internal sealed class SqliteEntityDeleteService : IEntityDeleteService
         if (entityType is "artist" or "release" or "recording")
         {
             var analysis = await AnalyzeDependenciesAsync(entityType, entityId, null!, cancellationToken).ConfigureAwait(false);
-            if (analysis.Blockers.Any(b => b.TableName is "catalog_foundation_revision" or "release_artwork_link" or "release_artwork_revision"))
+            if (analysis.Blockers.Any(b => b.TableName is "catalog_foundation_revision" or "release_artwork_link" or "release_artwork_revision"
+                or "artist_profile" or "artist_profile_revision" or "artist_artwork_link" or "artist_artwork_revision"))
                 throw new CatalogFoundationConflictException("Legacy replacement cannot erase reviewed canonical credits/references or placement history.");
         }
         var ownedCleanupTables = new List<OwnedCleanupTable>();

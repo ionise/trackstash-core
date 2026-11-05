@@ -15,3 +15,9 @@ public sealed record ArtistCreditQuery(string ArtistId, bool Tracks, int Page = 
 public sealed record ArtistCreditListing(string CreditId, string? ReleaseId, string? ReleaseTitle, string? RecordingId,
     string? PlacementId, string? TrackTitle, string? MixName, string Role, string Scope, string? CreditedName, int? Position);
 public sealed record ArtistCreditPage(IReadOnlyList<ArtistCreditListing> Items, int Total, int Page, int PageSize);
+public sealed record ArtistAppearanceCredit(string Role, string Scope, string? CreditedName);
+public sealed record ArtistAppearanceLabel(string Id, string? Name, bool IsPrimary);
+public sealed record ArtistAppearanceListing(string? ReleaseId, string? ReleaseTitle, string? RecordingId,
+    string? PlacementId, string? TrackTitle, string? MixName, string? CoverAssetId,
+    IReadOnlyList<ArtistAppearanceLabel> Labels, IReadOnlyList<ArtistAppearanceCredit> Credits);
+public sealed record ArtistAppearancePage(IReadOnlyList<ArtistAppearanceListing> Items, int Total, int Page, int PageSize);

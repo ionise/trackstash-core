@@ -82,6 +82,12 @@ public interface ILabelRepository
 
 public interface IArtistRepository
 {
+    ValueTask<ArtistAppearancePage> AppearancesAsync(ArtistCreditQuery query, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Grouped Artist appearances are not supported by this provider.");
+    ValueTask<ArtistProfileSnapshot?> GetProfileAsync(string id, CancellationToken ct = default)
+        => throw new NotSupportedException("Artist profiles are not supported by this storage provider.");
+    ValueTask<ArtistProfileResult> SaveProfileAsync(string id, string version, ArtistProfile profile, CancellationToken ct = default)
+        => throw new NotSupportedException("Artist profiles are not supported by this storage provider.");
     ValueTask<CatalogArtistPage> QueryAsync(ArtistQuery query, CancellationToken cancellationToken = default)
         => throw new NotSupportedException("Artist queries are not supported by this storage provider.");
     ValueTask<ArtistCreditPage> CreditsAsync(ArtistCreditQuery query, CancellationToken cancellationToken = default)

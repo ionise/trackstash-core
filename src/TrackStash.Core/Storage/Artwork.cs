@@ -10,11 +10,17 @@ public sealed record ArtworkGallery(string LabelId, string Version, IReadOnlyLis
 public sealed record ArtworkGalleryResult(LabelUpdateStatus Status, ArtworkGallery? Gallery = null);
 public sealed record ReleaseArtworkGallery(string ReleaseId, string Version, IReadOnlyList<ArtworkEntry> Items);
 public sealed record ReleaseArtworkGalleryResult(LabelUpdateStatus Status, ReleaseArtworkGallery? Gallery = null);
+public sealed record ArtistArtworkGallery(string ArtistId, string Version, IReadOnlyList<ArtworkEntry> Items);
+public sealed record ArtistArtworkGalleryResult(LabelUpdateStatus Status, ArtistArtworkGallery? Gallery = null);
 public sealed record ArtworkSourceIdentity(string Provider, string CandidateId, string Revision);
 
 /// <summary>Shared asset metadata and label associations. Content is stored separately, never exposed as a filesystem path.</summary>
 public interface IArtworkRepository
 {
+    ValueTask<ArtistArtworkGallery?> GetArtistGalleryAsync(string id, CancellationToken ct = default)
+        => throw new NotSupportedException("Artist artwork is not supported by this provider.");
+    ValueTask<ArtistArtworkGalleryResult> ReplaceArtistGalleryAsync(string id, string version, IReadOnlyList<ArtworkEntry> items, CancellationToken ct = default)
+        => throw new NotSupportedException("Artist artwork is not supported by this provider.");
     ValueTask<ArtworkAsset?> GetAssetAsync(string assetId, CancellationToken ct = default);
     ValueTask AddAssetAsync(ArtworkAsset asset, CancellationToken ct = default);
     ValueTask<ArtworkGallery?> GetLabelGalleryAsync(string labelId, CancellationToken ct = default);
@@ -55,7 +61,7 @@ public static class ArtworkRules
         if (asset.SourceUrl is not null) LabelProfile.ValidateUrl(asset.SourceUrl, nameof(asset.SourceUrl));
     }
 
-    public static void ValidateGallery(IReadOnlyList<ArtworkEntry> items, bool release = false)
+    public static void ValidateGallery(IReadOnlyList<ArtworkEntry> items, bool release = false, bool artist = false)
     {
         ArgumentNullException.ThrowIfNull(items);
         if (items.Any(item => item is null) || items.Count > MaximumItems || items.Select(i => i.Id).Distinct(StringComparer.Ordinal).Count() != items.Count
@@ -65,8 +71,8 @@ public static class ArtworkRules
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(item.Id);
             ValidateAssetId(item.AssetId);
-            if (!(release ? item.Role is "cover" or "image" : item.Role is "logo" or "image") || item.Caption?.Length > 1000)
-                throw new ArgumentException($"Use {(release ? "cover" : "logo")} or image, and a caption of at most 1000 characters.", nameof(items));
+            if (!(artist ? item.Role is "portrait" or "image" : release ? item.Role is "cover" or "image" : item.Role is "logo" or "image") || item.Caption?.Length > 1000)
+                throw new ArgumentException($"Use {(artist ? "portrait" : release ? "cover" : "logo")} or image, and a caption of at most 1000 characters.", nameof(items));
         }
     }
 

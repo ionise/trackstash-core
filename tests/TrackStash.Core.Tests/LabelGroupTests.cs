@@ -298,7 +298,7 @@ public sealed class LabelGroupTests : IAsyncLifetime
         }
         await Provider.Migrations.ApplyPendingMigrationsAsync();
         await Provider.Migrations.ApplyPendingMigrationsAsync();
-        Assert.Equal(11, await Provider.Migrations.GetCurrentVersionAsync());
+        Assert.Equal(12, await Provider.Migrations.GetCurrentVersionAsync());
         await using (var unit = await Provider.BeginUnitOfWorkAsync())
         {
             Assert.Equal(aVersion, (await unit.Labels.GetByIdAsync("a"))!.Version);
@@ -324,7 +324,7 @@ public sealed class LabelGroupTests : IAsyncLifetime
         Assert.Equal(0L, await Sql("SELECT count(*) FROM sqlite_master WHERE type='table' AND name LIKE 'label_group%'"));
         await Sql("DROP INDEX idx_label_memberships");
         await Provider.Migrations.ApplyPendingMigrationsAsync();
-        Assert.Equal(11, await Provider.Migrations.GetCurrentVersionAsync());
+        Assert.Equal(12, await Provider.Migrations.GetCurrentVersionAsync());
     }
     [Fact]
     public async Task ThirdMemberChangeStalesReviewAndFreshMergeTransfersDifferentGroupsWithAudit()
