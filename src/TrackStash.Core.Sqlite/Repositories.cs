@@ -253,7 +253,7 @@ internal sealed partial class SqliteLabelRepository : ILabelRepository
     }
 }
 
-internal sealed class SqliteArtistRepository : IArtistRepository
+internal sealed partial class SqliteArtistRepository : IArtistRepository
 {
     private readonly SqliteConnection _connection;
     private readonly SqliteTransaction _transaction;

@@ -82,6 +82,10 @@ public interface ILabelRepository
 
 public interface IArtistRepository
 {
+    ValueTask<CatalogArtistPage> QueryAsync(ArtistQuery query, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Artist queries are not supported by this storage provider.");
+    ValueTask<ArtistCreditPage> CreditsAsync(ArtistCreditQuery query, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Artist credit browsing is not supported by this storage provider.");
     ValueTask<Artist?> GetByIdAsync(string artistId, CancellationToken cancellationToken = default);
 
     ValueTask<Artist?> GetByExternalRefAsync(string source, string externalId, CancellationToken cancellationToken = default);
