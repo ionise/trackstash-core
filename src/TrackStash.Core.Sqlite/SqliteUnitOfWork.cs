@@ -18,6 +18,7 @@ internal sealed class SqliteUnitOfWork : IUnitOfWork
         Labels = new SqliteLabelRepository(connection, transaction);
         LabelMerges = new SqliteLabelMergeRepository(connection, transaction);
         LabelRelationships = new SqliteLabelRelationshipRepository(connection, transaction);
+        LabelGroups = new SqliteLabelGroupRepository(connection, transaction);
         Artwork = new SqliteArtworkRepository(connection, transaction);
         Artists = new SqliteArtistRepository(connection, transaction);
         Releases = new SqliteReleaseRepository(connection, transaction);
@@ -30,6 +31,7 @@ internal sealed class SqliteUnitOfWork : IUnitOfWork
     public ILabelRepository Labels { get; }
     public ILabelMergeRepository LabelMerges { get; }
     public ILabelRelationshipRepository LabelRelationships { get; }
+    public ILabelGroupRepository LabelGroups { get; }
     public IArtworkRepository Artwork { get; }
     public IArtistRepository Artists { get; }
     public IReleaseRepository Releases { get; }

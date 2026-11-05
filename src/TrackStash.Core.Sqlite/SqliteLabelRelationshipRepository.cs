@@ -100,6 +100,27 @@ internal sealed class SqliteLabelRelationshipRepository(SqliteConnection connect
         VALUES(@id,@from,@to,@type,@source,@url,@notes,@created)
         """, ct, ("id", edge.Id), ("from", edge.FromLabelId), ("to", edge.ToLabelId), ("type", edge.Type),
         ("source", edge.Source), ("url", edge.SourceUrl), ("notes", edge.Notes), ("created", edge.CreatedUtc.ToString("O")));
+    public async ValueTask<LabelRelationshipResult> SaveEdgeAsync(string labelId, string expectedVersion, LabelEdgeInput input, CancellationToken ct = default)
+    {
+        var owner = await GetAsync(labelId, ct);
+        if (owner is null) return new(LabelUpdateStatus.NotFound);
+        if (owner.Version != expectedVersion) return new(LabelUpdateStatus.Stale);
+        var related = await GetAsync(input.RelatedLabelId, ct);
+        if (related is null) return new(LabelUpdateStatus.NotFound);
+        if (related.Version != input.TargetVersion) return new(LabelUpdateStatus.Stale);
+        var from = input.Incoming ? related : owner;
+        var to = input.Incoming ? owner : related;
+        var previous = input.Id is null ? null : from.Items.SingleOrDefault(e => e.Relationship.Id == input.Id);
+        if (input.Id is not null && (previous is null || previous.From.Id != from.LabelId || previous.To.Id != to.LabelId))
+            throw new LabelRelationshipValidationException("Relationship does not belong to these endpoints.");
+        if (input.Remove && input.Id is null) throw new LabelRelationshipValidationException("Select an existing relationship to remove.");
+        var drafts = from.Items.Where(e => e.From.Id == from.LabelId && e.Relationship.Id != input.Id)
+            .Select(e => new LabelRelationshipInput(e.Relationship.Id, e.To.Id, e.Relationship.Type, e.Relationship.Source,
+                e.Relationship.SourceUrl, e.Relationship.Notes, e.To.Version)).ToList();
+        if (!input.Remove) drafts.Add(new(input.Id, to.LabelId, input.Type, input.Source, input.SourceUrl, input.Notes, to.Version));
+        var result = await ReplaceOutgoingAsync(from.LabelId, from.Version, drafts, ct);
+        return result.Status == LabelUpdateStatus.Updated ? new(result.Status, await GetAsync(labelId, ct)) : result;
+    }
     private async Task ExecuteAsync(string sql, CancellationToken ct, params (string Name, object? Value)[] parameters)
     {
         using var command = connection.CreateCommand();

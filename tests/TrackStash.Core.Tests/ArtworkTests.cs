@@ -139,7 +139,7 @@ public sealed class ArtworkTests : IAsyncLifetime
     {
         await PrepareLegacyAsync();
         var result = await Provider.Migrations.ApplyPendingMigrationsAsync();
-        Assert.Equal(7, result.CurrentVersion);
+        Assert.Equal(8, result.CurrentVersion);
         await using var unit = await Provider.BeginUnitOfWorkAsync();
         var gallery = (await unit.Artwork.GetLabelGalleryAsync("survivor"))!;
         var item = Assert.Single(gallery.Items);
@@ -182,6 +182,10 @@ public sealed class ArtworkTests : IAsyncLifetime
     }
 
     private Task PrepareLegacyAsync() => ExecuteAsync("""
+        DROP TABLE label_group_membership;
+        DROP TABLE label_group_membership_revision;
+        DROP TABLE label_group;
+        DROP TABLE label_group_revision;
         DROP TRIGGER relationship_history_insert;
         DROP TRIGGER relationship_history_update;
         DROP TRIGGER relationship_history_delete;

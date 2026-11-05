@@ -234,10 +234,12 @@ public sealed class LabelRelationshipTests : IAsyncLifetime
     {
         var before = await SetAsync("a", ("b", "imprint_of", "original source"));
         await SqlAsync("""
+            DROP TABLE label_group_membership; DROP TABLE label_group_membership_revision;
+            DROP TABLE label_group; DROP TABLE label_group_revision;
             DROP TRIGGER relationship_history_insert; DROP TRIGGER relationship_history_update; DROP TRIGGER relationship_history_delete;
             DROP TRIGGER relationship_cycle_insert; DROP TRIGGER relationship_cycle_update;
             DROP TABLE label_relationship_revision;
-            DELETE FROM schema_migration WHERE version=7;
+            DELETE FROM schema_migration WHERE version>=7;
             """);
         if (cyclic)
         {
@@ -250,7 +252,7 @@ public sealed class LabelRelationshipTests : IAsyncLifetime
         }
         else
         {
-            Assert.Equal(7, (await Provider.Migrations.ApplyPendingMigrationsAsync()).CurrentVersion);
+            Assert.Equal(8, (await Provider.Migrations.ApplyPendingMigrationsAsync()).CurrentVersion);
             var after = await GetAsync("a");
             Assert.Equal(before.Version, after.Version);
             Assert.Equal(before.Items.ToArray(), after.Items.ToArray());

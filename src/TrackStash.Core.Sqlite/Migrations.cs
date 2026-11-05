@@ -13,7 +13,96 @@ internal static partial class Migrations
         new SchemaMigration(5, "label-profiles-and-enrichment-foundation", LabelProfiles + LabelProfileGuards()),
         new SchemaMigration(6, "shared-artwork-and-label-galleries", SharedArtwork),
         new SchemaMigration(7, "reviewed-label-relationships", LabelRelationshipWorkflow()),
+        new SchemaMigration(8, "label-groups-and-memberships", LabelGroups()),
     ];
+
+    private static string LabelGroups()
+    {
+        var sql = new System.Text.StringBuilder("""
+            CREATE TABLE label_group(
+                group_id TEXT PRIMARY KEY NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('family','organisation')),
+                name TEXT NOT NULL CHECK(length(trim(name))>0),
+                normalized_name TEXT NOT NULL,
+                sort_name TEXT, description TEXT, website TEXT,
+                version TEXT NOT NULL, created_utc TEXT NOT NULL, updated_utc TEXT NOT NULL
+            );
+            CREATE INDEX idx_label_group_name ON label_group(normalized_name,group_id);
+            CREATE TABLE label_group_membership(
+                membership_id TEXT PRIMARY KEY NOT NULL,
+                label_id TEXT NOT NULL REFERENCES label(label_id),
+                group_id TEXT NOT NULL REFERENCES label_group(group_id),
+                status TEXT NOT NULL CHECK(status IN ('current','former','unknown')),
+                since_date TEXT, until_date TEXT,
+                source TEXT NOT NULL CHECK(length(trim(source)) BETWEEN 1 AND 200),
+                source_url TEXT, notes TEXT CHECK(notes IS NULL OR length(notes)<=2000),
+                version TEXT NOT NULL, created_utc TEXT NOT NULL, updated_utc TEXT NOT NULL,
+                UNIQUE(label_id,group_id),
+                CHECK(status<>'current' OR until_date IS NULL)
+            );
+            CREATE INDEX idx_group_members ON label_group_membership(group_id,status,label_id);
+            CREATE INDEX idx_label_memberships ON label_group_membership(label_id,status,group_id);
+            CREATE TRIGGER label_group_kind_immutable BEFORE UPDATE OF group_id,kind ON label_group
+            WHEN NEW.group_id<>OLD.group_id OR NEW.kind<>OLD.kind
+            BEGIN SELECT RAISE(ABORT,'Group identity/kind is immutable'); END;
+            CREATE TRIGGER label_group_no_delete BEFORE DELETE ON label_group
+            BEGIN SELECT RAISE(ABORT,'Group deletion requires reviewed history preservation'); END;
+            CREATE TRIGGER label_group_version AFTER UPDATE OF name,normalized_name,sort_name,description,website ON label_group
+            BEGIN UPDATE label_group SET version=lower(hex(randomblob(16))) WHERE group_id=NEW.group_id; END;
+            CREATE TRIGGER membership_identity_immutable BEFORE UPDATE OF membership_id,label_id,group_id ON label_group_membership
+            WHEN NEW.membership_id<>OLD.membership_id OR NEW.label_id<>OLD.label_id OR NEW.group_id<>OLD.group_id
+            BEGIN SELECT RAISE(ABORT,'Membership endpoints are immutable; transfer through reviewed merge'); END;
+            """);
+        foreach (var (table, columns) in new[]
+        {
+            ("label_group", new[] { "group_id","kind","name","normalized_name","sort_name","description","website","created_utc","updated_utc" }),
+            ("label_group_membership", new[] { "membership_id","label_id","group_id","status","since_date","until_date","source","source_url","notes","created_utc","updated_utc" }),
+        })
+        {
+            var history = table == "label_group" ? "label_group_revision" : "label_group_membership_revision";
+            sql.AppendLine($"""
+                CREATE TABLE {history}(
+                    revision_id INTEGER PRIMARY KEY AUTOINCREMENT, recorded_utc TEXT NOT NULL,
+                    actor TEXT NOT NULL, action TEXT NOT NULL, before_json TEXT, after_json TEXT
+                );
+                CREATE TRIGGER {history}_no_update BEFORE UPDATE ON {history}
+                BEGIN SELECT RAISE(ABORT,'Group history is immutable'); END;
+                CREATE TRIGGER {history}_no_delete BEFORE DELETE ON {history}
+                BEGIN SELECT RAISE(ABORT,'Group history is permanent'); END;
+                """);
+            string Snapshot(string row) => "json_object(" + string.Join(",", columns.Select(c => $"'{c}',{row}.{c}")) + ")";
+            foreach (var op in new[] { "INSERT", "UPDATE", "DELETE" })
+            {
+                var change = op == "UPDATE" ? " OF " + string.Join(",", columns) : "";
+                sql.AppendLine($"""
+                    CREATE TRIGGER {table}_history_{op.ToLowerInvariant()} AFTER {op}{change} ON {table}
+                    BEGIN INSERT INTO {history}(recorded_utc,actor,action,before_json,after_json)
+                    VALUES(strftime('%Y-%m-%dT%H:%M:%fZ','now'),'manual','{op.ToLowerInvariant()}',
+                    {(op == "INSERT" ? "NULL" : Snapshot("OLD"))},{(op == "DELETE" ? "NULL" : Snapshot("NEW"))}); END;
+                    """);
+                if (table != "label_group_membership") continue;
+                var row = op == "DELETE" ? "OLD" : "NEW";
+                sql.AppendLine($"""
+                    CREATE TRIGGER membership_endpoints_{op.ToLowerInvariant()} AFTER {op}{change} ON label_group_membership
+                    BEGIN
+                        UPDATE label SET version=lower(hex(randomblob(16))) WHERE label_id={row}.label_id;
+                        UPDATE label_group SET version=lower(hex(randomblob(16))) WHERE group_id={row}.group_id;
+                    END;
+                    """);
+                if (op == "DELETE") continue;
+                sql.AppendLine($"""
+                    CREATE TRIGGER membership_no_retired_{op.ToLowerInvariant()} BEFORE {op} ON label_group_membership
+                    WHEN EXISTS(SELECT 1 FROM retired_label WHERE retired_id=NEW.label_id)
+                    BEGIN SELECT RAISE(ABORT,'Membership label is retired'); END;
+                    """);
+            }
+        }
+        sql.AppendLine("""
+            CREATE TRIGGER membership_version AFTER UPDATE OF status,since_date,until_date,source,source_url,notes ON label_group_membership
+            BEGIN UPDATE label_group_membership SET version=lower(hex(randomblob(16))) WHERE membership_id=NEW.membership_id; END;
+            """);
+        return sql.ToString();
+    }
 
     private static string LabelRelationshipWorkflow()
     {

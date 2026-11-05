@@ -8,6 +8,8 @@ public sealed record LabelRelationships(string LabelId, string Version, IReadOnl
 public sealed record LabelRelationshipInput(string? Id, string ToLabelId, string Type, string Source,
     string? SourceUrl, string? Notes, string TargetVersion);
 public sealed record LabelRelationshipResult(LabelUpdateStatus Status, LabelRelationships? Relationships = null);
+public sealed record LabelEdgeInput(string? Id, string RelatedLabelId, string Type, bool Incoming,
+    string Source, string? SourceUrl, string? Notes, string TargetVersion, bool Remove = false);
 public sealed class LabelRelationshipValidationException(string message) : ArgumentException(message);
 
 public interface ILabelRelationshipRepository
@@ -15,6 +17,7 @@ public interface ILabelRelationshipRepository
     ValueTask<LabelRelationships?> GetAsync(string labelId, CancellationToken ct = default);
     ValueTask<LabelRelationshipResult> ReplaceOutgoingAsync(string labelId, string expectedVersion,
         IReadOnlyList<LabelRelationshipInput> items, CancellationToken ct = default);
+    ValueTask<LabelRelationshipResult> SaveEdgeAsync(string labelId, string expectedVersion, LabelEdgeInput input, CancellationToken ct = default);
 }
 
 public static class LabelRelationshipRules
