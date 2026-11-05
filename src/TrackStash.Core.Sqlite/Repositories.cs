@@ -471,6 +471,37 @@ internal sealed class SqliteArtistRepository : IArtistRepository
 
 internal sealed class SqliteReleaseRepository : IReleaseRepository
 {
+    public async ValueTask<CatalogReleasePage> QueryAsync(ReleaseQuery query, CancellationToken cancellationToken = default)
+    {
+        query.Validate();
+        const string predicate = """
+            (@q='' OR instr(lower(coalesce(r.title,r.name,'')),lower(@q))>0
+              OR instr(lower(coalesce(r.catalog_number,'')),lower(@q))>0)
+            AND (@label IS NULL OR EXISTS(SELECT 1 FROM release_label_link ll WHERE ll.release_id=r.release_id AND ll.label_id=@label))
+            """;
+        using var command = _connection.CreateCommand();
+        command.Transaction = _transaction;
+        command.Parameters.AddWithValue("@q", query.Search ?? "");
+        command.Parameters.AddWithValue("@label", query.LabelId ?? (object)DBNull.Value);
+        command.CommandText = $"SELECT count(*) FROM release r WHERE {predicate}";
+        var total = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
+        command.CommandText = $"""
+            SELECT r.release_id,coalesce(r.title,r.name),r.catalog_number,r.publish_date,
+              (SELECT ll.label_id FROM release_label_link ll WHERE ll.release_id=r.release_id ORDER BY ll.is_primary DESC,ll.label_id LIMIT 1),
+              (SELECT l.name FROM release_label_link ll JOIN label l ON l.label_id=ll.label_id WHERE ll.release_id=r.release_id ORDER BY ll.is_primary DESC,ll.label_id LIMIT 1),
+              (SELECT count(*) FROM release_recording rr WHERE rr.release_id=r.release_id)
+            FROM release r WHERE {predicate}
+            ORDER BY coalesce(r.title,r.name,'') COLLATE NOCASE,r.release_id LIMIT @size OFFSET @offset
+            """;
+        command.Parameters.AddWithValue("@size", query.PageSize);
+        command.Parameters.AddWithValue("@offset", ((long)query.Page - 1) * query.PageSize);
+        var items = new List<CatalogReleaseSummary>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        string? Text(int i) => reader.IsDBNull(i) ? null : reader.GetString(i);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            items.Add(new(reader.GetString(0), Text(1), Text(2), Text(3), Text(4), Text(5), reader.GetInt32(6)));
+        return new(items, total, query.Page, query.PageSize);
+    }
     private readonly SqliteConnection _connection;
     private readonly SqliteTransaction _transaction;
 

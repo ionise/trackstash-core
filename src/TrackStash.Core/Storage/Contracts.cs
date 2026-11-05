@@ -95,6 +95,8 @@ public interface IArtistRepository
 
 public interface IReleaseRepository
 {
+    ValueTask<CatalogReleasePage> QueryAsync(ReleaseQuery query, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Release queries are not supported by this storage provider.");
     ValueTask<Release?> GetByIdAsync(string releaseId, CancellationToken cancellationToken = default);
 
     ValueTask<Release?> GetByExternalRefAsync(string source, string externalId, CancellationToken cancellationToken = default);
