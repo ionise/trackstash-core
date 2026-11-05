@@ -15,9 +15,12 @@ public sealed class SqliteCatalogSnapshotSource(string databasePath) : ICatalogS
     }.ToString());
 
     public async Task CreateSnapshotAsync(string destination, CancellationToken ct = default)
+        => await CreateSqliteSnapshotAsync(_database, destination, ct);
+
+    internal static async Task CreateSqliteSnapshotAsync(string database, string destination, CancellationToken ct)
     {
-        if (!File.Exists(_database)) throw new FileNotFoundException("Catalog database does not exist.", _database);
-        await using var input = ReadOnly(_database);
+        if (!File.Exists(database)) throw new FileNotFoundException("Backup source database does not exist.", database);
+        await using var input = ReadOnly(database);
         await input.OpenAsync(ct);
         var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
         if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
@@ -36,12 +39,8 @@ public sealed class SqliteCatalogSnapshotSource(string databasePath) : ICatalogS
     {
         await using var connection = ReadOnly(database);
         await connection.OpenAsync(ct);
+        await CheckIntegrityAsync(connection, ct);
         using var command = connection.CreateCommand();
-        command.CommandText = "PRAGMA integrity_check";
-        if ((string?)await command.ExecuteScalarAsync(ct) != "ok") throw new InvalidDataException("Catalog integrity check failed.");
-        command.CommandText = "PRAGMA foreign_key_check";
-        await using (var violations = await command.ExecuteReaderAsync(ct))
-            if (await violations.ReadAsync(ct)) throw new InvalidDataException("Catalog has foreign-key violations.");
         command.CommandText = "SELECT max(version) FROM schema_migration";
         var version = Convert.ToInt32(await command.ExecuteScalarAsync(ct));
         if (version != 6) throw new InvalidDataException("Backup currently requires catalog schema 6. Migrate deliberately before backing up.");
@@ -55,5 +54,16 @@ public sealed class SqliteCatalogSnapshotSource(string databasePath) : ICatalogS
             assets.Add(new(id, reader.GetString(1), reader.GetInt64(2)));
         }
         return new(version, assets);
+    }
+
+    internal static async Task CheckIntegrityAsync(SqliteConnection connection, CancellationToken ct, bool requireForeignKeys = true)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA integrity_check";
+        if ((string?)await command.ExecuteScalarAsync(ct) != "ok") throw new InvalidDataException("Database integrity check failed.");
+        if (!requireForeignKeys) return;
+        command.CommandText = "PRAGMA foreign_key_check";
+        await using (var violations = await command.ExecuteReaderAsync(ct))
+            if (await violations.ReadAsync(ct)) throw new InvalidDataException("Catalog has foreign-key violations.");
     }
 }

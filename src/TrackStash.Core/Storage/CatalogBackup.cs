@@ -7,16 +7,17 @@ using System.Text.RegularExpressions;
 namespace TrackStash.Core.Storage;
 
 public sealed record BackupAsset(string Id, string Hash, long Bytes);
-public sealed record CatalogSnapshot(int SchemaVersion, IReadOnlyList<BackupAsset> Assets);
+public sealed record CatalogSnapshot(int SchemaVersion, IReadOnlyList<BackupAsset> Assets, IReadOnlyList<string>? Warnings = null);
 public interface ICatalogSnapshotSource
 {
+    string Kind => "catalog";
     string CatalogKey { get; }
     Task CreateSnapshotAsync(string destination, CancellationToken ct = default);
     Task<CatalogSnapshot> InspectSnapshotAsync(string database, CancellationToken ct = default);
 }
 public sealed record BackupFile(string Path, long Bytes, string Sha256);
 public sealed record BackupManifest(int FormatVersion, string Id, string CatalogKey, DateTimeOffset CreatedUtc,
-    int SchemaVersion, IReadOnlyList<BackupFile> Files);
+    int SchemaVersion, IReadOnlyList<BackupFile> Files, string Kind = "catalog", IReadOnlyList<string>? Warnings = null);
 /// <summary>A completed filesystem ZIP, identified without exposing its server path.</summary>
 public sealed record CatalogBackupInfo(string Id, string Filename, DateTimeOffset CreatedUtc, long Bytes);
 public sealed record CatalogBackupResult(CatalogBackupInfo Backup, IReadOnlyList<string> Warnings);
@@ -31,17 +32,18 @@ public interface ICatalogBackupService
 }
 
 public sealed partial class CatalogBackupService(
-    ICatalogSnapshotSource source, IArtworkContentStore artwork, string? backupRoot = null) : ICatalogBackupService
+    ICatalogSnapshotSource source, IArtworkContentStore? artwork, string? backupRoot = null) : ICatalogBackupService
 {
     public static string DefaultRoot => Environment.GetEnvironmentVariable("TRACKSTASH_BACKUP_ROOT") ??
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TrackStash", "backups");
     public string Root { get; } = new ManagedArtworkStore(backupRoot ?? DefaultRoot).Root;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private const int Keep = 10;
-    private static string Filename(DateTimeOffset createdUtc, string id) =>
-        $"trackstash-catalog-{createdUtc.ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture)}-{id}.zip";
+    private string DatabaseEntry => source.Kind == "scanner" ? "inventory.db" : "catalog.db";
+    private string Filename(DateTimeOffset createdUtc, string id) =>
+        $"trackstash-{source.Kind}-{createdUtc.ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture)}-{id}.zip";
 
-    [GeneratedRegex(@"^trackstash-catalog-\d{8}T\d{6}Z-([a-f0-9]{32})\.zip$")]
+    [GeneratedRegex(@"^trackstash-(catalog|scanner)-\d{8}T\d{6}Z-([a-f0-9]{32})\.zip$")]
     private static partial Regex ArchiveName();
 
     private void CheckRoot()
@@ -100,8 +102,8 @@ public sealed partial class CatalogBackupService(
             var id = Guid.NewGuid().ToString("N");
             var created = DateTimeOffset.UtcNow;
             var filename = Filename(created, id);
-            var database = Path.Combine(work, "catalog.db");
-            progress?.Report("Snapshotting catalog");
+            var database = Path.Combine(work, DatabaseEntry);
+            progress?.Report($"Snapshotting {source.Kind}");
             await source.CreateSnapshotAsync(database, ct);
             var snapshot = await source.InspectSnapshotAsync(database, ct);
             var staged = Path.Combine(work, "backup.zip");
@@ -109,16 +111,17 @@ public sealed partial class CatalogBackupService(
             await using (var output = PrivateFile(staged, FileMode.CreateNew))
             {
                 using var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
-                files.Add(await AddAsync(zip, database, "catalog.db", ct));
-                var store = new ManagedArtworkStore(artwork.Root);
-                if (store.Root != artwork.Root) throw new IOException("Artwork root was replaced by a symbolic link.");
+                files.Add(await AddAsync(zip, database, DatabaseEntry, ct));
+                if (artwork is not null && new ManagedArtworkStore(artwork.Root).Root != artwork.Root)
+                    throw new IOException("Artwork root was replaced by a symbolic link.");
                 var assetIndex = 0;
                 foreach (var asset in snapshot.Assets)
                 {
+                    if (artwork is null) throw new InvalidDataException("This backup source requires artwork storage.");
                     ct.ThrowIfCancellationRequested();
                     ArtworkRules.ValidateAssetId(asset.Id);
                     progress?.Report($"Copying artwork {++assetIndex}/{snapshot.Assets.Count}");
-                    var directory = Path.Combine(store.Root, asset.Id);
+                    var directory = Path.Combine(artwork.Root, asset.Id);
                     RejectLink(directory);
                     var original = await AddAsync(zip, Path.Combine(directory, "original"), $"artwork/{asset.Id}/original", ct);
                     if (original.Bytes != asset.Bytes || original.Sha256 != asset.Hash)
@@ -129,11 +132,11 @@ public sealed partial class CatalogBackupService(
                     if (File.Exists(thumbnail))
                         files.Add(await AddAsync(zip, thumbnail, $"artwork/{asset.Id}/thumbnail.jpg", ct));
                 }
-                var manifest = new BackupManifest(1, id, source.CatalogKey, created, snapshot.SchemaVersion, files);
+                var manifest = new BackupManifest(1, id, source.CatalogKey, created, snapshot.SchemaVersion, files, source.Kind, snapshot.Warnings);
                 await using var entry = zip.CreateEntry("manifest.json").Open();
                 await JsonSerializer.SerializeAsync(entry, manifest, Json, ct);
             }
-            progress?.Report("Verifying ZIP and catalog");
+            progress?.Report($"Verifying ZIP and {source.Kind}");
             await VerifyArchiveAsync(staged, work, ct);
             ct.ThrowIfCancellationRequested();
             var final = Path.Combine(Root, filename);
@@ -145,7 +148,7 @@ public sealed partial class CatalogBackupService(
             {
                 warnings = [$"Backup saved and verified, but retention could not run: {ex.Message}"];
             }
-            return new(new(id, filename, created, new FileInfo(final).Length), warnings);
+            return new(new(id, filename, created, new FileInfo(final).Length), [.. snapshot.Warnings ?? [], .. warnings]);
         }
         finally { Directory.Delete(work, recursive: true); }
     }
@@ -185,7 +188,8 @@ public sealed partial class CatalogBackupService(
         var manifest = JsonSerializer.Deserialize<BackupManifest>(bytes, Json) ?? throw new InvalidDataException("Backup manifest is invalid.");
         if (manifest.FormatVersion != 1 || !Regex.IsMatch(manifest.Id ?? "", "^[a-f0-9]{32}$") ||
             !Regex.IsMatch(manifest.CatalogKey ?? "", "^[A-F0-9]{64}$") || manifest.Files is null ||
-            manifest.Files.Count is < 1 or > 100_000 || manifest.SchemaVersion != 6)
+            manifest.Files.Count is < 1 or > 100_000 ||
+            !(manifest.Kind == "catalog" && manifest.SchemaVersion == 6 || manifest.Kind == "scanner" && manifest.SchemaVersion >= 0))
             throw new InvalidDataException("Unsupported or invalid backup manifest.");
         return manifest;
     }
@@ -195,18 +199,19 @@ public sealed partial class CatalogBackupService(
         RejectLink(archive);
         using var zip = ZipFile.OpenRead(archive);
         var manifest = ReadManifest(zip);
+        if (manifest.Kind != source.Kind) throw new InvalidDataException("Backup type does not match the selected source.");
         var names = new HashSet<string>(StringComparer.Ordinal);
         long total = 0;
         foreach (var file in manifest.Files)
         {
             if (file is null || file.Path is null || !names.Add(file.Path) || file.Bytes < 0 ||
                 !Regex.IsMatch(file.Sha256 ?? "", "^[A-F0-9]{64}$") ||
-                (file.Path != "catalog.db" && !Regex.IsMatch(file.Path, "^artwork/[a-f0-9]{32}/(original|thumbnail\\.jpg)$")))
+                (file.Path != DatabaseEntry && (source.Kind != "catalog" || !Regex.IsMatch(file.Path, "^artwork/[a-f0-9]{32}/(original|thumbnail\\.jpg)$"))))
                 throw new InvalidDataException("Unsafe or duplicate backup manifest entry.");
             if (file.Bytes > 100L * 1024 * 1024 * 1024 - total) throw new InvalidDataException("Backup exceeds the 100 GiB restore limit.");
             total += file.Bytes;
         }
-        if (!names.Contains("catalog.db") || zip.Entries.Count != names.Count + 1 ||
+        if (!names.Contains(DatabaseEntry) || zip.Entries.Count != names.Count + 1 ||
             zip.Entries.Select(e => e.FullName).Distinct(StringComparer.Ordinal).Count() != zip.Entries.Count ||
             zip.Entries.Any(e => e.FullName != "manifest.json" && !names.Contains(e.FullName)))
             throw new InvalidDataException("ZIP contents do not match the manifest.");
@@ -219,7 +224,7 @@ public sealed partial class CatalogBackupService(
                 var entry = zip.GetEntry(file.Path) ?? throw new InvalidDataException("A manifest file is missing.");
                 if (entry.Length != file.Bytes) throw new InvalidDataException($"Length mismatch: {file.Path}");
                 await using var input = entry.Open();
-                await using var output = file.Path == "catalog.db" ? PrivateFile(database, FileMode.CreateNew) : null;
+                await using var output = file.Path == DatabaseEntry ? PrivateFile(database, FileMode.CreateNew) : null;
                 var actual = await CopyHashAsync(input, output ?? Stream.Null, file.Path, ct, file.Bytes);
                 if (actual != file) throw new InvalidDataException($"Checksum mismatch: {file.Path}");
             }
@@ -237,7 +242,7 @@ public sealed partial class CatalogBackupService(
             if (manifest.Files.Any(f => f.Path.EndsWith("/thumbnail.jpg", StringComparison.Ordinal) &&
                 !originals.ContainsKey(f.Path.Replace("/thumbnail.jpg", "/original", StringComparison.Ordinal))))
                 throw new InvalidDataException("Thumbnail has no catalog asset.");
-            return manifest;
+            return manifest with { Warnings = snapshot.Warnings };
         }
         finally { File.Delete(database); }
     }
@@ -246,12 +251,13 @@ public sealed partial class CatalogBackupService(
     {
         var filename = Path.GetFileName(path);
         var match = ArchiveName().Match(filename);
-        if (!match.Success) return null;
+        if (!match.Success || match.Groups[1].Value != source.Kind) return null;
         RejectLink(path);
         using var zip = ZipFile.OpenRead(path);
         var manifest = ReadManifest(zip);
+        if (manifest.Kind != source.Kind) throw new InvalidDataException("Backup filename type does not match manifest.");
         if (manifest.CatalogKey != source.CatalogKey) return null;
-        if (manifest.Id != match.Groups[1].Value ||
+        if (manifest.Id != match.Groups[2].Value ||
             filename != Filename(manifest.CreatedUtc, manifest.Id))
             throw new InvalidDataException("Backup filename does not match manifest.");
         return new(manifest.Id, filename, manifest.CreatedUtc, new FileInfo(path).Length);
@@ -311,8 +317,11 @@ public sealed partial class CatalogBackupService(
         {
             var manifest = await VerifyArchiveAsync(archive, staging, ct);
             using var zip = ZipFile.OpenRead(archive);
-            Directory.CreateDirectory(Path.Combine(staging, "artwork"));
-            PrivateDirectory(Path.Combine(staging, "artwork"));
+            if (source.Kind == "catalog")
+            {
+                Directory.CreateDirectory(Path.Combine(staging, "artwork"));
+                PrivateDirectory(Path.Combine(staging, "artwork"));
+            }
             foreach (var file in manifest.Files)
             {
                 var path = Path.Combine(staging, file.Path.Replace('/', Path.DirectorySeparatorChar));
@@ -323,7 +332,7 @@ public sealed partial class CatalogBackupService(
                 var actual = await CopyHashAsync(input, output, file.Path, ct, file.Bytes);
                 if (actual != file) throw new InvalidDataException("Archive changed during restore.");
             }
-            await source.InspectSnapshotAsync(Path.Combine(staging, "catalog.db"), ct);
+            await source.InspectSnapshotAsync(Path.Combine(staging, DatabaseEntry), ct);
             ct.ThrowIfCancellationRequested();
             Directory.Move(staging, target);
         }
