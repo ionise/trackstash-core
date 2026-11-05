@@ -139,7 +139,7 @@ public sealed class ArtworkTests : IAsyncLifetime
     {
         await PrepareLegacyAsync();
         var result = await Provider.Migrations.ApplyPendingMigrationsAsync();
-        Assert.Equal(9, result.CurrentVersion);
+        Assert.Equal(10, result.CurrentVersion);
         await using var unit = await Provider.BeginUnitOfWorkAsync();
         var gallery = (await unit.Artwork.GetLabelGalleryAsync("survivor"))!;
         var item = Assert.Single(gallery.Items);

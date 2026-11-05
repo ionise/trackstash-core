@@ -301,8 +301,8 @@ public sealed class LabelRepositoryTests : IAsyncLifetime
             }
             var provider = new SqliteStorageProvider(path);
             var migrated = await provider.Migrations.ApplyPendingMigrationsAsync();
-            Assert.Equal(9, migrated.CurrentVersion);
-            Assert.Equal(7, migrated.AppliedMigrations.Count);
+            Assert.Equal(10, migrated.CurrentVersion);
+            Assert.Equal(8, migrated.AppliedMigrations.Count);
             Assert.Empty((await provider.Migrations.ApplyPendingMigrationsAsync()).AppliedMigrations);
             await using var unit = await provider.BeginUnitOfWorkAsync();
             var label = Assert.IsType<Label>(await unit.Labels.GetByIdAsync("legacy-id"));

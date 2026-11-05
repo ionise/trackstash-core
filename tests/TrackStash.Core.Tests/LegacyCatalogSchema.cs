@@ -27,7 +27,7 @@ internal static class LegacyCatalogSchema
         if (Convert.ToInt32(await command.ExecuteScalarAsync()) != 0)
             throw new InvalidOperationException("Legacy fixture reset requires empty canonical entities.");
         var triggers = new List<string>();
-        command.CommandText = "SELECT name FROM sqlite_master WHERE type='trigger' AND (name LIKE 'foundation_%' OR name LIKE 'placement_%' OR name LIKE 'artist_%' OR name LIKE 'release_%' OR name LIKE 'recording_%')";
+        command.CommandText = "SELECT name FROM sqlite_master WHERE type='trigger' AND (name LIKE 'foundation_%' OR name LIKE 'placement_%' OR name LIKE 'artist_%' OR name LIKE 'release_%' OR name LIKE 'recording_%' OR name LIKE 'import_stamp_%' OR name LIKE 'embedding_invalidate_%')";
         await using (var reader = await command.ExecuteReaderAsync())
             while (await reader.ReadAsync()) triggers.Add(reader.GetString(0));
         foreach (var trigger in triggers)
@@ -36,6 +36,8 @@ internal static class LegacyCatalogSchema
             await command.ExecuteNonQueryAsync();
         }
         command.CommandText = """
+            DROP TABLE release_import_outcome; DROP TABLE release_import_binding; DROP TABLE release_import_supersession; DROP TABLE release_import_preview;
+            DROP TABLE release_import_state; DROP TABLE catalog_embedding_outbox; DROP TABLE catalog_embedding_source;
             DROP TABLE placement_external_ref; DROP TABLE placement_artist_credit;
             DROP TABLE release_recording; DROP TABLE release_artist_credit; DROP TABLE recording_artist_credit;
             DROP TABLE catalog_foundation_revision;
@@ -49,7 +51,7 @@ internal static class LegacyCatalogSchema
             ALTER TABLE release DROP COLUMN new_release_date;
             ALTER TABLE recording DROP COLUMN version;
             ALTER TABLE recording DROP COLUMN duration_ms;
-            DELETE FROM schema_migration WHERE version=9;
+            DELETE FROM schema_migration WHERE version>=9;
             """;
         await command.ExecuteNonQueryAsync();
         command.CommandText = CanonicalTablesSql;

@@ -24,6 +24,7 @@ internal sealed class SqliteUnitOfWork : IUnitOfWork
         Releases = new SqliteReleaseRepository(connection, transaction);
         Recordings = new SqliteRecordingRepository(connection, transaction);
         CatalogFoundations = new SqliteCatalogFoundationRepository(connection, transaction);
+        ReleaseImports = new SqliteReleaseImportRepository(connection, transaction);
         MediaFiles = new SqliteMediaFileRepository(connection, transaction);
         Matches = new SqliteMatchRepository(connection, transaction);
         Embeddings = new SqliteEmbeddingRepository(connection, transaction);
@@ -38,6 +39,7 @@ internal sealed class SqliteUnitOfWork : IUnitOfWork
     public IReleaseRepository Releases { get; }
     public IRecordingRepository Recordings { get; }
     public ICatalogFoundationRepository CatalogFoundations { get; }
+    public IReleaseImportRepository ReleaseImports { get; }
     public IMediaFileRepository MediaFiles { get; }
     public IMatchRepository Matches { get; }
     public IEmbeddingRepository? Embeddings { get; }

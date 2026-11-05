@@ -43,7 +43,7 @@ public sealed class SqliteCatalogSnapshotSource(string databasePath) : ICatalogS
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT max(version) FROM schema_migration";
         var version = Convert.ToInt32(await command.ExecuteScalarAsync(ct));
-        if (version is not (6 or 7 or 8 or 9)) throw new InvalidDataException("Backup currently requires catalog schema 6, 7, 8 or 9. Migrate deliberately before backing up.");
+        if (version is not (6 or 7 or 8 or 9 or 10)) throw new InvalidDataException("Backup currently requires catalog schema 6-10. Migrate deliberately before backing up.");
         command.CommandText = "SELECT asset_id,content_hash,byte_length FROM artwork_asset ORDER BY asset_id";
         var assets = new List<BackupAsset>();
         await using var reader = await command.ExecuteReaderAsync(ct);

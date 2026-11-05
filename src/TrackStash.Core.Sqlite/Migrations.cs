@@ -15,6 +15,7 @@ internal static partial class Migrations
         new SchemaMigration(7, "reviewed-label-relationships", LabelRelationshipWorkflow()),
         new SchemaMigration(8, "label-groups-and-memberships", LabelGroups()),
         new SchemaMigration(9, "canonical-release-foundations", CatalogFoundations()),
+        new SchemaMigration(10, "reviewed-release-imports", ReleaseImports()),
     ];
 
     private static string LabelGroups()
