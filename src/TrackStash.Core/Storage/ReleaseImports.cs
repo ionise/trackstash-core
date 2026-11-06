@@ -2,7 +2,9 @@ namespace TrackStash.Core.Storage;
 
 public sealed record ReleaseImportDecision(string Kind, long ProviderId, string Action, string? CanonicalId = null,
     string? Evidence = null);
-public sealed record ReleaseImportCandidate(string Id, string? Name, string? MixName = null, string? Isrc = null);
+/// <param name="BeatportIds">Beatport IDs already bound to the candidate (for Recordings, including its listings).</param>
+public sealed record ReleaseImportCandidate(string Id, string? Name, string? MixName = null, string? Isrc = null,
+    IReadOnlyList<string>? BeatportIds = null);
 public sealed record ReleaseImportIdentity(string Kind, long ProviderId, string Name, string Action,
     string? CanonicalId, bool CompoundReview, IReadOnlyList<ReleaseImportCandidate> Candidates,
     string? MixName = null, string? Isrc = null);

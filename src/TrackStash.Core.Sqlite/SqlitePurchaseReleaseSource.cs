@@ -13,11 +13,13 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
     private const int MaxPayloadBytes = 4 * 1024 * 1024;
     private const int MaxTracks = 2000;
     private readonly string _connectionString;
+    private readonly string _databasePath;
 
     public SqlitePurchaseReleaseSource(string databasePath)
     {
         if (!Path.IsPathFullyQualified(databasePath))
             throw new ArgumentException("Source database path must be absolute.", nameof(databasePath));
+        _databasePath = databasePath;
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = databasePath, Mode = SqliteOpenMode.ReadOnly, Cache = SqliteCacheMode.Private,
@@ -41,6 +43,17 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
         }
     }
 
+    public ValueTask<string> GetSnapshotStampAsync(CancellationToken cancellationToken = default)
+    {
+        static string Part(string path)
+        {
+            var file = new FileInfo(path);
+            return file.Exists ? $"{file.Length}:{file.LastWriteTimeUtc.Ticks}" : "absent";
+        }
+        if (!File.Exists(_databasePath)) throw new PurchaseSourceUnavailableException("The configured purchase source could not be opened.");
+        return ValueTask.FromResult($"{Part(_databasePath)}|{Part(_databasePath + "-wal")}");
+    }
+
     public async ValueTask<PurchaseSourcePage<PurchaseReleaseCandidate>> QueryAsync(PurchaseReleaseQuery query, CancellationToken cancellationToken = default)
     {
         query.Validate();
@@ -51,9 +64,11 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
             const string where = "FROM bpc_release r WHERE r.in_purchase_corpus = 1 AND r.beatport_release_id > 0 AND (@q = '' OR instr(lower(r.title), lower(@q)) > 0 OR CAST(r.beatport_release_id AS TEXT) = @q)" +
-                " AND r.beatport_release_id NOT IN (SELECT value FROM json_each(@excluded))";
+                " AND r.beatport_release_id NOT IN (SELECT value FROM json_each(@excluded))" +
+                " AND (@included IS NULL OR r.beatport_release_id IN (SELECT value FROM json_each(@included)))";
             command.Parameters.AddWithValue("@q", query.Search?.Trim() ?? "");
             command.Parameters.AddWithValue("@excluded", JsonSerializer.Serialize(query.ExcludedReleaseIds ?? []));
+            command.Parameters.AddWithValue("@included", query.IncludedReleaseIds is null ? DBNull.Value : JsonSerializer.Serialize(query.IncludedReleaseIds));
             command.CommandText = "SELECT count(*) " + where;
             var total = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), CultureInfo.InvariantCulture);
             command.CommandText = "SELECT r.beatport_release_id, r.title, EXISTS(SELECT 1 FROM beatport_release_cache c WHERE c.beatport_release_id = r.beatport_release_id) " +
@@ -92,6 +107,59 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
                     payload = reader.GetString(0); fetched = reader.GetString(1);
                 }
             }
+            return await InspectCoreAsync(releaseId, payload, fetched, query,
+                (ids, ct) => LoadTracksAsync(connection, transaction, ids, ct), cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqliteException ex) { throw new PurchaseSourceUnavailableException("The Beatport cache schema could not be read.", ex); }
+    }
+
+    public async ValueTask<IReadOnlyList<PurchaseReleaseInspection>> InspectAllAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        using var transaction = connection.BeginTransaction(deferred: true);
+        try
+        {
+            var releases = new List<(long Id, string? Payload, string? Fetched)>();
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = """
+                    SELECT r.beatport_release_id, c.release_json, c.fetched_utc FROM bpc_release r
+                    LEFT JOIN beatport_release_cache c ON c.beatport_release_id = r.beatport_release_id
+                    WHERE r.in_purchase_corpus = 1 ORDER BY r.beatport_release_id
+                    """;
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                    releases.Add((reader.GetInt64(0), reader.IsDBNull(1) ? null : reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2)));
+            }
+            // One lookup-table scan for every manifest track; each release then applies the same per-release rules and limits.
+            var all = await LoadTracksAsync(connection, transaction, null, cancellationToken).ConfigureAwait(false);
+            Task<Dictionary<long, List<TrackObservation>>> Slice(long[] ids, CancellationToken _)
+            {
+                var slice = new Dictionary<long, List<TrackObservation>>();
+                long bytes = 0;
+                foreach (var id in ids)
+                    if (all.TryGetValue(id, out var list))
+                    {
+                        if (list.Count > 100) throw new PurchaseSourceUnavailableException("Too many conflicting observations for one track.");
+                        bytes += list.Sum(o => (long)Encoding.UTF8.GetByteCount(o.Json));
+                        if (bytes > 32 * 1024 * 1024) throw new PurchaseSourceUnavailableException("Release inspection exceeds the supported total payload size.");
+                        slice[id] = list;
+                    }
+                return Task.FromResult(slice);
+            }
+            var results = new List<PurchaseReleaseInspection>(releases.Count);
+            foreach (var (id, payload, fetched) in releases)
+                results.Add(await InspectCoreAsync(id, payload, fetched, new PurchaseReleaseQuery(1, 1), Slice, cancellationToken).ConfigureAwait(false));
+            return results;
+        }
+        catch (SqliteException ex) { throw new PurchaseSourceUnavailableException("The Beatport cache schema could not be read.", ex); }
+    }
+
+    private static async Task<PurchaseReleaseInspection> InspectCoreAsync(long releaseId, string? payload, string? fetched, PurchaseReleaseQuery query,
+        Func<long[], CancellationToken, Task<Dictionary<long, List<TrackObservation>>>> loadTracks, CancellationToken cancellationToken)
+    {
+        {
             var diagnostics = new List<ReleaseSourceDiagnostic>
             {
                 new("corpus_not_receipt", "warning", "Derived corpus flag is an entry-point hint, not receipt or media ownership proof."),
@@ -144,7 +212,7 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
                         Block(diagnostics, "duplicate_track_reference", "Release manifest contains duplicate provider track IDs.");
                 }
             }
-            var cached = await LoadTracksAsync(connection, transaction, manifest.OfType<long>().Distinct().ToArray(), cancellationToken).ConfigureAwait(false);
+            var cached = await loadTracks(manifest.OfType<long>().Distinct().ToArray(), cancellationToken).ConfigureAwait(false);
             var results = new List<SourceReleaseTrack>();
             foreach (var id in manifest)
             {
@@ -186,17 +254,16 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
                 !diagnostics.Any(d => d.Severity == "blocker"), declared, manifest.Count, results.Count(t => t.Status == "cached"),
                 credits, new(page, results.Count, query.Page, query.PageSize), diagnostics);
         }
-        catch (SqliteException ex) { throw new PurchaseSourceUnavailableException("The Beatport cache schema could not be read.", ex); }
     }
 
     private sealed record TrackObservation(string Json, string Timestamp);
 
     private static async Task<Dictionary<long, List<TrackObservation>>> LoadTracksAsync(SqliteConnection connection,
-        SqliteTransaction transaction, long[] ids, CancellationToken ct)
+        SqliteTransaction transaction, long[]? ids, CancellationToken ct)
     {
         var result = new Dictionary<long, List<TrackObservation>>();
         long payloadBytes = 0;
-        if (ids.Length == 0) return result;
+        if (ids is { Length: 0 }) return result;
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -207,20 +274,21 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
                      ELSE '[]' END) j
             WHERE s.lookup_status = 'Success'
               AND json_type(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END, '$.id') = 'integer'
-              AND json_extract(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END, '$.id') IN (SELECT value FROM json_each(@ids))
+              AND (@ids IS NULL OR json_extract(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END, '$.id') IN (SELECT value FROM json_each(@ids)))
             ORDER BY s.normalized_isrc, j.key
             """;
-        command.Parameters.AddWithValue("@ids", JsonSerializer.Serialize(ids));
+        command.Parameters.AddWithValue("@ids", ids is null ? DBNull.Value : JsonSerializer.Serialize(ids));
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             ct.ThrowIfCancellationRequested();
             var id = reader.GetInt64(0);
             if (!result.TryGetValue(id, out var list)) result[id] = list = [];
-            if (list.Count >= 100) throw new PurchaseSourceUnavailableException("Too many conflicting observations for one track.");
+            // The batch scan defers these per-release limits to its slice, matching single-release inspection.
+            if (ids is not null && list.Count >= 100) throw new PurchaseSourceUnavailableException("Too many conflicting observations for one track.");
             var json = reader.GetString(1);
             payloadBytes += Encoding.UTF8.GetByteCount(json);
-            if (payloadBytes > 32 * 1024 * 1024)
+            if (ids is not null && payloadBytes > 32 * 1024 * 1024)
                 throw new PurchaseSourceUnavailableException("Release inspection exceeds the supported total payload size.");
             list.Add(new(json, reader.GetString(2)));
         }

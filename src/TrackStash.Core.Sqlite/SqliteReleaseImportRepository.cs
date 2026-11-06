@@ -31,13 +31,17 @@ internal sealed class SqliteReleaseImportRepository(SqliteConnection connection,
             CatalogEntityKind.Recording => "recording", _ => throw new CatalogFoundationValidationException("Invalid entity kind.") };
         var extra = kind == CatalogEntityKind.Recording ? ",mix_name,isrc" : ",NULL,NULL";
         var match = kind == CatalogEntityKind.Recording ? " OR (@isrc IS NOT NULL AND isrc=@isrc)" : "";
-        using var command = Command($"SELECT {table}_id,coalesce(name,{(kind == CatalogEntityKind.Artist ? "name" : "title")}){extra} FROM {table} WHERE (@name<>'' AND normalized_name=@name){match} ORDER BY {table}_id LIMIT 101",
+        var providerIds = $"SELECT external_id FROM {table}_external_ref r WHERE r.{table}_id=c.{table}_id AND r.source='beatport'" +
+            (kind == CatalogEntityKind.Recording ? " UNION SELECT p.external_id FROM release_recording rr JOIN placement_external_ref p ON p.placement_id=rr.placement_id WHERE rr.recording_id=c.recording_id AND p.source='beatport'" : "");
+        using var command = Command($"SELECT {table}_id,coalesce(name,{(kind == CatalogEntityKind.Artist ? "name" : "title")}){extra}," +
+            $"(SELECT json_group_array(external_id) FROM ({providerIds})) FROM {table} c WHERE (@name<>'' AND normalized_name=@name){match} ORDER BY {table}_id LIMIT 101",
             ("@name", normalizedName), ("@isrc", isrc));
         var items = new List<ReleaseImportCandidate>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             items.Add(new(reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
-                reader.IsDBNull(2) ? null : reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3)));
+                reader.IsDBNull(2) ? null : reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3),
+                JsonSerializer.Deserialize<string[]>(reader.GetString(4))));
         return items;
     }
     public async ValueTask<ReleaseImportBinding?> GetBindingAsync(string source, string externalId, CancellationToken cancellationToken = default)

@@ -4,6 +4,8 @@ public sealed record PurchaseReleaseQuery(int Page = 1, int PageSize = 25, strin
 {
     /// <summary>Provider release IDs to omit before paging, such as releases already admitted to the catalog.</summary>
     public IReadOnlyCollection<long>? ExcludedReleaseIds { get; init; }
+    /// <summary>When set, only these provider release IDs are eligible, applied before paging.</summary>
+    public IReadOnlyCollection<long>? IncludedReleaseIds { get; init; }
 
     public void Validate()
     {
@@ -37,6 +39,10 @@ public interface IPurchaseReleaseSource
 {
     ValueTask<PurchaseSourcePage<PurchaseReleaseCandidate>> QueryAsync(PurchaseReleaseQuery query, CancellationToken cancellationToken = default);
     ValueTask<PurchaseReleaseInspection?> InspectAsync(long releaseId, PurchaseReleaseQuery query, CancellationToken cancellationToken = default);
+    /// <summary>An opaque value that changes whenever the underlying source may have changed; used to invalidate derived summaries.</summary>
+    ValueTask<string> GetSnapshotStampAsync(CancellationToken cancellationToken = default);
+    /// <summary>Inspects every corpus release in one snapshot with the same rules as <see cref="InspectAsync"/>; track pages hold at most one item.</summary>
+    ValueTask<IReadOnlyList<PurchaseReleaseInspection>> InspectAllAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed class PurchaseSourceValidationException(string message) : Exception(message);
