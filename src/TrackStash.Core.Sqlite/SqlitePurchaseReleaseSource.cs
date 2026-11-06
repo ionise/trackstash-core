@@ -50,8 +50,10 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
         {
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
-            const string where = "FROM bpc_release r WHERE r.in_purchase_corpus = 1 AND r.beatport_release_id > 0 AND (@q = '' OR instr(lower(r.title), lower(@q)) > 0 OR CAST(r.beatport_release_id AS TEXT) = @q)";
+            const string where = "FROM bpc_release r WHERE r.in_purchase_corpus = 1 AND r.beatport_release_id > 0 AND (@q = '' OR instr(lower(r.title), lower(@q)) > 0 OR CAST(r.beatport_release_id AS TEXT) = @q)" +
+                " AND r.beatport_release_id NOT IN (SELECT value FROM json_each(@excluded))";
             command.Parameters.AddWithValue("@q", query.Search?.Trim() ?? "");
+            command.Parameters.AddWithValue("@excluded", JsonSerializer.Serialize(query.ExcludedReleaseIds ?? []));
             command.CommandText = "SELECT count(*) " + where;
             var total = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), CultureInfo.InvariantCulture);
             command.CommandText = "SELECT r.beatport_release_id, r.title, EXISTS(SELECT 1 FROM beatport_release_cache c WHERE c.beatport_release_id = r.beatport_release_id) " +

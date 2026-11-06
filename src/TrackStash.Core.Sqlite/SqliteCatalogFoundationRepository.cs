@@ -189,6 +189,17 @@ internal sealed class SqliteCatalogFoundationRepository(SqliteConnection connect
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) owners.Add(reader.GetString(0));
         return owners;
     }
+    public async ValueTask<IReadOnlyList<ExternalReferenceOwner>> ListReferenceOwnersAsync(CatalogEntityKind kind, string source, CancellationToken cancellationToken = default)
+    {
+        Required(source, "Source");
+        var table = Table(kind);
+        using var command = Command($"SELECT external_id,{table}_id FROM {table}_external_ref WHERE source=@source ORDER BY external_id,{table}_id",
+            ("@source", source));
+        var owners = new List<ExternalReferenceOwner>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) owners.Add(new(reader.GetString(0), reader.GetString(1)));
+        return owners;
+    }
 
     public ValueTask<IReadOnlyList<CatalogCredit>> GetCreditsAsync(CatalogEntityKind kind, string id, CancellationToken cancellationToken = default)
     {

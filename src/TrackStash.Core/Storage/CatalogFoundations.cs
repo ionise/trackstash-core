@@ -14,6 +14,8 @@ public sealed record ReleasePlacement(string Id, string ReleaseId, string Record
     int DisplayOrder, int? SourcePosition, string OrderSource, int? DiscNumber, int? TrackNumber,
     IReadOnlyList<CatalogCredit> Credits, IReadOnlyList<EntityReference> ExternalReferences);
 
+public sealed record ExternalReferenceOwner(string ExternalId, string OwnerId);
+
 public sealed class CatalogFoundationValidationException(string message) : Exception(message);
 public sealed class CatalogFoundationConflictException(string message) : Exception(message);
 public sealed class CatalogFoundationStaleException(string message) : Exception(message);
@@ -25,6 +27,8 @@ public interface ICatalogFoundationRepository
     ValueTask<CatalogEntityMetadata?> GetMetadataAsync(CatalogEntityKind kind, string id, CancellationToken cancellationToken = default);
     ValueTask<CatalogEntityMetadata> UpdateMetadataAsync(CatalogEntityMetadata metadata, CancellationToken cancellationToken = default);
     ValueTask<IReadOnlyList<string>> FindReferenceOwnersAsync(CatalogEntityKind kind, string source, string externalId, CancellationToken cancellationToken = default);
+    /// <summary>Lists every external ID from one source with its owning entity, ordered by external ID then owner.</summary>
+    ValueTask<IReadOnlyList<ExternalReferenceOwner>> ListReferenceOwnersAsync(CatalogEntityKind kind, string source, CancellationToken cancellationToken = default);
     ValueTask<IReadOnlyList<CatalogCredit>> GetCreditsAsync(CatalogEntityKind kind, string id, CancellationToken cancellationToken = default);
     ValueTask SaveCreditAsync(CatalogEntityKind kind, string entityId, string expectedVersion, CatalogCredit credit, CancellationToken cancellationToken = default);
     ValueTask<IReadOnlyList<ReleasePlacement>> GetPlacementsAsync(string releaseId, CancellationToken cancellationToken = default);

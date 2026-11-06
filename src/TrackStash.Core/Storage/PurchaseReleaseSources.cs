@@ -2,6 +2,9 @@ namespace TrackStash.Core.Storage;
 
 public sealed record PurchaseReleaseQuery(int Page = 1, int PageSize = 25, string? Search = null)
 {
+    /// <summary>Provider release IDs to omit before paging, such as releases already admitted to the catalog.</summary>
+    public IReadOnlyCollection<long>? ExcludedReleaseIds { get; init; }
+
     public void Validate()
     {
         if (Page < 1 || PageSize is < 1 or > 100 || Search?.Length > 200)
