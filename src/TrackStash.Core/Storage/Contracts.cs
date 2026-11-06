@@ -120,6 +120,9 @@ public interface IReleaseRepository
 
 public interface IRecordingRepository
 {
+    ValueTask<TrackListingPage> QueryTracksAsync(TrackQuery query, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Track queries are not supported by this storage provider.");
+
     ValueTask<Recording?> GetByIdAsync(string recordingId, CancellationToken cancellationToken = default);
 
     ValueTask<Recording?> GetByIsrcAsync(string isrc, CancellationToken cancellationToken = default);

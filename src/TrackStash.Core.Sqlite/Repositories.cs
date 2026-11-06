@@ -789,7 +789,7 @@ internal sealed class SqliteReleaseRepository : IReleaseRepository
     }
 }
 
-internal sealed class SqliteRecordingRepository : IRecordingRepository
+internal sealed partial class SqliteRecordingRepository : IRecordingRepository
 {
     private readonly SqliteConnection _connection;
     private readonly SqliteTransaction _transaction;
