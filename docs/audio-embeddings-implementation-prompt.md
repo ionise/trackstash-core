@@ -2,6 +2,8 @@
 
 Use this prompt in a future implementation session. Do not treat it as authorization to begin implementation now.
 
+Read the audio similarity strategy (`audio-embed-worker/docs/audio-similarity-strategy.md` in the TrackStash workspace) first. It records expert advice and pilot results that supersede parts of this prompt: deterministic full-track windowed profiles, persisted window embeddings, hybrid global and section retrieval, BPM/key as rerank only, and MMR playlist reranking.
+
 ## Role and Task
 
 Act as the implementation agent for the current Trackstash architecture. Design and implement a first production-quality, offline audio-embedding pipeline that enriches local track identities with vectors usable for:

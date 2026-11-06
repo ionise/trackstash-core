@@ -70,8 +70,10 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
             command.Parameters.AddWithValue("@excluded", JsonSerializer.Serialize(query.ExcludedReleaseIds ?? []));
             command.Parameters.AddWithValue("@included", query.IncludedReleaseIds is null ? DBNull.Value : JsonSerializer.Serialize(query.IncludedReleaseIds));
             command.CommandText = "SELECT count(*) " + where;
+            var broker = await HasBrokerEntitiesAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
             var total = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), CultureInfo.InvariantCulture);
-            command.CommandText = "SELECT r.beatport_release_id, r.title, EXISTS(SELECT 1 FROM beatport_release_cache c WHERE c.beatport_release_id = r.beatport_release_id) " +
+            command.CommandText = "SELECT r.beatport_release_id, r.title, EXISTS(SELECT 1 FROM beatport_release_cache c WHERE c.beatport_release_id = r.beatport_release_id)" +
+                (broker ? " OR EXISTS(SELECT 1 FROM beatport_broker_entity e WHERE e.entity_type = 'release' AND e.entity_id = r.beatport_release_id) " : " ") +
                 where + " ORDER BY r.title COLLATE NOCASE, r.beatport_release_id LIMIT @take OFFSET @skip";
             command.Parameters.AddWithValue("@take", query.PageSize);
             command.Parameters.AddWithValue("@skip", ((long)query.Page - 1) * query.PageSize);
@@ -107,8 +109,16 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
                     payload = reader.GetString(0); fetched = reader.GetString(1);
                 }
             }
+            var broker = await HasBrokerEntitiesAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+            if (broker)
+            {
+                command.CommandText = "SELECT payload_json, fetched_utc FROM beatport_broker_entity WHERE entity_type = 'release' AND entity_id = @id";
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                    (payload, fetched) = Newer((payload, fetched), (reader.GetString(0), reader.GetString(1)));
+            }
             return await InspectCoreAsync(releaseId, payload, fetched, query,
-                (ids, ct) => LoadTracksAsync(connection, transaction, ids, ct), cancellationToken).ConfigureAwait(false);
+                (ids, ct) => LoadTracksAsync(connection, transaction, ids, broker, ct), cancellationToken).ConfigureAwait(false);
         }
         catch (SqliteException ex) { throw new PurchaseSourceUnavailableException("The Beatport cache schema could not be read.", ex); }
     }
@@ -119,21 +129,33 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
         using var transaction = connection.BeginTransaction(deferred: true);
         try
         {
+            var broker = await HasBrokerEntitiesAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
             var releases = new List<(long Id, string? Payload, string? Fetched)>();
             using (var command = connection.CreateCommand())
             {
                 command.Transaction = transaction;
-                command.CommandText = """
-                    SELECT r.beatport_release_id, c.release_json, c.fetched_utc FROM bpc_release r
-                    LEFT JOIN beatport_release_cache c ON c.beatport_release_id = r.beatport_release_id
-                    WHERE r.in_purchase_corpus = 1 ORDER BY r.beatport_release_id
-                    """;
+                command.CommandText = broker
+                    ? """
+                      SELECT r.beatport_release_id, c.release_json, c.fetched_utc, e.payload_json, e.fetched_utc FROM bpc_release r
+                      LEFT JOIN beatport_release_cache c ON c.beatport_release_id = r.beatport_release_id
+                      LEFT JOIN beatport_broker_entity e ON e.entity_type = 'release' AND e.entity_id = r.beatport_release_id
+                      WHERE r.in_purchase_corpus = 1 ORDER BY r.beatport_release_id
+                      """
+                    : """
+                      SELECT r.beatport_release_id, c.release_json, c.fetched_utc, NULL, NULL FROM bpc_release r
+                      LEFT JOIN beatport_release_cache c ON c.beatport_release_id = r.beatport_release_id
+                      WHERE r.in_purchase_corpus = 1 ORDER BY r.beatport_release_id
+                      """;
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                static string? Get(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-                    releases.Add((reader.GetInt64(0), reader.IsDBNull(1) ? null : reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2)));
+                {
+                    var (payload, fetched) = Newer((Get(reader, 1), Get(reader, 2)), (Get(reader, 3), Get(reader, 4)));
+                    releases.Add((reader.GetInt64(0), payload, fetched));
+                }
             }
             // One lookup-table scan for every manifest track; each release then applies the same per-release rules and limits.
-            var all = await LoadTracksAsync(connection, transaction, null, cancellationToken).ConfigureAwait(false);
+            var all = await LoadTracksAsync(connection, transaction, null, broker, cancellationToken).ConfigureAwait(false);
             Task<Dictionary<long, List<TrackObservation>>> Slice(long[] ids, CancellationToken _)
             {
                 var slice = new Dictionary<long, List<TrackObservation>>();
@@ -258,8 +280,26 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
 
     private sealed record TrackObservation(string Json, string Timestamp);
 
+    private static async Task<bool> HasBrokerEntitiesAsync(SqliteConnection connection, SqliteTransaction transaction, CancellationToken ct)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'beatport_broker_entity'";
+        return await command.ExecuteScalarAsync(ct).ConfigureAwait(false) is not null;
+    }
+
+    /// <summary>Picks the more recently fetched of the psBeatPort cache and broker payloads (broker wins ties).</summary>
+    private static (string? Payload, string? Fetched) Newer((string? Payload, string? Fetched) cache, (string? Payload, string? Fetched) broker)
+    {
+        if (broker.Payload is null) return cache;
+        if (cache.Payload is null) return broker;
+        static DateTimeOffset At(string? value) =>
+            DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var at) ? at : DateTimeOffset.MinValue;
+        return At(broker.Fetched) >= At(cache.Fetched) ? broker : cache;
+    }
+
     private static async Task<Dictionary<long, List<TrackObservation>>> LoadTracksAsync(SqliteConnection connection,
-        SqliteTransaction transaction, long[]? ids, CancellationToken ct)
+        SqliteTransaction transaction, long[]? ids, bool broker, CancellationToken ct)
     {
         var result = new Dictionary<long, List<TrackObservation>>();
         long payloadBytes = 0;
@@ -291,6 +331,25 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
             if (ids is not null && payloadBytes > 32 * 1024 * 1024)
                 throw new PurchaseSourceUnavailableException("Release inspection exceeds the supported total payload size.");
             list.Add(new(json, reader.GetString(2)));
+        }
+        if (!broker) return result;
+        await reader.DisposeAsync().ConfigureAwait(false);
+        // A track fetched directly by ID through the broker is authoritative and supersedes ISRC-search observations,
+        // which also resolves conflicting_track_payloads once the track has been refreshed.
+        command.CommandText = """
+            SELECT entity_id, payload_json, fetched_utc FROM beatport_broker_entity
+            WHERE entity_type = 'track' AND (@ids IS NULL OR entity_id IN (SELECT value FROM json_each(@ids)))
+            ORDER BY entity_id
+            """;
+        await using var entities = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await entities.ReadAsync(ct).ConfigureAwait(false))
+        {
+            ct.ThrowIfCancellationRequested();
+            var json = entities.GetString(1);
+            payloadBytes += Encoding.UTF8.GetByteCount(json);
+            if (ids is not null && payloadBytes > 32 * 1024 * 1024)
+                throw new PurchaseSourceUnavailableException("Release inspection exceeds the supported total payload size.");
+            result[entities.GetInt64(0)] = [new(json, entities.GetString(2))];
         }
         return result;
     }
