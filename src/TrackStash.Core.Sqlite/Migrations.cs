@@ -18,6 +18,7 @@ internal static partial class Migrations
         new SchemaMigration(10, "reviewed-release-imports", ReleaseImports()),
         new SchemaMigration(11, "release-artwork", ReleaseArtwork),
         new SchemaMigration(12, "artist-profiles-and-artwork", ArtistProfiles()),
+        new SchemaMigration(13, "reviewed-metadata-enrichment", MetadataEnrichment()),
     ];
 
     private static string LabelGroups()

@@ -19,6 +19,8 @@ Migration 9 implements aggregate versions, catalog number/UPC, separately named 
 
 Official numbering is optional at import. Manual display reordering must preserve stable placements, source sequence and independently evidenced official numbers; reimport must not silently reset curator order. The same design defines versioned canonical embedding documents and asynchronous post-commit generation.
 
+Migration 13 adds optional separate genre/subgenre lists and preferred classification in `release_musical_metadata`, together with immutable enrichment review/apply history. [Enrichment contracts](../src/TrackStash.Core/Storage/Enrichment.cs) support reviewed scalar updates while preserving all labels, credits and placements. SonoVault group dates are not exact edition dates: Catalog only offers an explicitly selected edition's catalog number/barcode and valid day-precision date for apply. No automatic track admission, Label/Artist identity mapping, artwork attachment or ownership assertion is implied. Schema-13 backup/restore retains musical metadata and evidence/history.
+
 Related documents:
 
 - [label-schema.md](label-schema.md) for label-domain tables.

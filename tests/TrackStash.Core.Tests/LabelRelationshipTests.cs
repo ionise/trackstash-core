@@ -253,7 +253,7 @@ public sealed class LabelRelationshipTests : IAsyncLifetime
         }
         else
         {
-            Assert.Equal(12, (await Provider.Migrations.ApplyPendingMigrationsAsync()).CurrentVersion);
+            Assert.Equal(13, (await Provider.Migrations.ApplyPendingMigrationsAsync()).CurrentVersion);
             var after = await GetAsync("a");
             Assert.Equal(before.Version, after.Version);
             Assert.Equal(before.Items.ToArray(), after.Items.ToArray());

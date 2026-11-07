@@ -45,6 +45,21 @@ internal sealed class SqliteEntityDeleteService : IEntityDeleteService
                 await CountAndAddBlockerAsync("release_artwork_revision", "release_id", entityId, "Release artwork history is permanent.", blockers, cancellationToken);
             }
         }
+        if (entityType is "release" or "recording")
+        {
+            using var enrichment = _connection.CreateCommand(); enrichment.Transaction = _transaction;
+            enrichment.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='enrichment_review'";
+            if (Convert.ToInt32(await enrichment.ExecuteScalarAsync(cancellationToken)) > 0)
+            {
+                await CountAndAddBlockerAsync($"{entityType}_musical_metadata", "entity_id", entityId,
+                    "Canonical musical metadata requires lifecycle-safe restore.", blockers, cancellationToken);
+                enrichment.CommandText = "SELECT count(*) FROM enrichment_review WHERE entity_id=@id AND lower(entity_kind)=@kind";
+                enrichment.Parameters.AddWithValue("@id", entityId); enrichment.Parameters.AddWithValue("@kind", entityType);
+                var reviews = Convert.ToInt32(await enrichment.ExecuteScalarAsync(cancellationToken));
+                if (reviews > 0) blockers.Add(new DeleteBlocker { TableName = "enrichment_review", ColumnName = "entity_id",
+                    RowCount = reviews, Reason = "Frozen enrichment evidence and apply history are permanent." });
+            }
+        }
         if (entityType is "artist" or "release" or "recording")
         {
             using var command = _connection.CreateCommand();
@@ -174,7 +189,8 @@ internal sealed class SqliteEntityDeleteService : IEntityDeleteService
         if (entityType is "artist" or "release" or "recording")
         {
             var analysis = await AnalyzeDependenciesAsync(entityType, entityId, null!, cancellationToken).ConfigureAwait(false);
-            if (analysis.Blockers.Any(b => b.TableName is "catalog_foundation_revision" or "release_artwork_link" or "release_artwork_revision"
+            if (analysis.Blockers.Any(b => b.TableName is "catalog_foundation_revision" or "enrichment_review"
+                or "recording_musical_metadata" or "release_musical_metadata" or "release_artwork_link" or "release_artwork_revision"
                 or "artist_profile" or "artist_profile_revision" or "artist_artwork_link" or "artist_artwork_revision"))
                 throw new CatalogFoundationConflictException("Legacy replacement cannot erase reviewed canonical credits/references or placement history.");
         }

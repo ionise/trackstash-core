@@ -72,9 +72,10 @@ public sealed class ArtistProfileTests : IAsyncLifetime
     [Fact]
     public async Task MigrationFromElevenPreservesArtistsAndRejectsInvalidFields()
     {
+        await Sql(LegacyCatalogSchema.RemoveEnrichmentSql);
         await Sql("DROP TABLE artist_profile; DROP TABLE artist_profile_revision; DROP TABLE artist_artwork_link; DROP TABLE artist_artwork_revision; DELETE FROM schema_migration WHERE version=12");
         var result = await Provider.Migrations.ApplyPendingMigrationsAsync();
-        Assert.Equal(12, result.CurrentVersion); Assert.Single(result.AppliedMigrations);
+        Assert.Equal(13, result.CurrentVersion); Assert.Equal(2, result.AppliedMigrations.Count);
         await using var unit = await Provider.BeginUnitOfWorkAsync();
         Assert.Equal("Artist A", (await unit.Artists.GetByIdAsync("a"))!.Name);
         var before = (await unit.Artists.GetProfileAsync("a"))!;

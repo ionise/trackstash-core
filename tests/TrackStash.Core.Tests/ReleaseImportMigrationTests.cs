@@ -30,6 +30,8 @@ public sealed class ReleaseImportMigrationTests
             {
                 await connection.OpenAsync();
                 using var command = connection.CreateCommand();
+                command.CommandText = LegacyCatalogSchema.RemoveEnrichmentSql;
+                await command.ExecuteNonQueryAsync();
                 command.CommandText = "SELECT name FROM sqlite_master WHERE type='trigger' AND (name LIKE 'import_stamp_%' OR name LIKE 'embedding_invalidate_%')";
                 var names = new List<string>();
                 await using (var reader = await command.ExecuteReaderAsync())
@@ -56,7 +58,7 @@ public sealed class ReleaseImportMigrationTests
                 }
             }
             var migrated = await provider.Migrations.ApplyPendingMigrationsAsync();
-            Assert.Equal(12, migrated.CurrentVersion); Assert.Equal(3, migrated.AppliedMigrations.Count);
+            Assert.Equal(13, migrated.CurrentVersion); Assert.Equal(4, migrated.AppliedMigrations.Count);
             await using var check = await provider.BeginUnitOfWorkAsync();
             var artist = (await check.Artists.GetByIdAsync(artistId))!;
             Assert.Equal(version, artist.Version); Assert.Equal("Preserved Artist", artist.Name); Assert.Equal("unresolved_compound", artist.IdentityStatus);

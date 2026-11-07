@@ -27,7 +27,7 @@ This document records the broader intent and staged delivery. The concrete choic
   notes/review; changes stale import reviews but do not enqueue image/profile-only
   text work. Private notes are excluded from canonical text. Legacy replacement
   and deletion are blocked with profile/artwork data or permanent history.
-- Catalog backups accept schemas 6-12 and retain all managed assets/history.
+- Catalog backups accept schemas 6-13 and retain all managed assets/history.
   Browsing remains available on schema 9-11; profile/artwork requires 12.
   Migration is additive, rehearsed only on temporary catalogs. A live upgrade
   needs separate verified backup, rehearsal and approval.
@@ -41,7 +41,7 @@ This document records the broader intent and staged delivery. The concrete choic
 - Candidates contain metadata, an HTTPS source URL and opaque release-scoped candidate/revision IDs. The browser does not load remote image URLs or submit arbitrary URLs for attachment. Attachment refreshes the candidate identity, checks the original Release token, requires explicit release-match/rights confirmation, and stores a validated managed copy with immutable provenance. Future adapters must restrict download/redirect destinations and credentials, enforce response limits/timeouts and respect provider terms; candidates are not proof of usage rights.
 - Release deletion and legacy YAML replacement remain blocked when associations or permanent artwork history exist. Portable artwork packaging/export and Recording inheritance remain separate work.
 - Migration 11 adds tables/triggers without replacing existing entities/assets. Browsing remains available on schema 9/10; artwork routes explicitly require 11. Tests use temporary databases only. Live upgrade requires separate backup, rehearsal and approval; the API never migrates automatically.
-- Catalog backups accept schemas 6-12 and include all managed assets, including release covers and replaced/detached history. Restore preserves the archived schema.
+- Catalog backups accept schemas 6-13 and include all managed assets, including release covers and replaced/detached history. Restore preserves the archived schema.
 
 ## Implemented Label Slice
 

@@ -59,7 +59,7 @@ public sealed class CatalogBackupTests : IAsyncLifetime
         var path = Path.Combine(Root, result.Backup.Filename);
         var manifest = await Service.VerifyAsync(path);
         Assert.Equal(5, manifest.Files.Count);
-        Assert.Equal(12, manifest.SchemaVersion);
+        Assert.Equal(13, manifest.SchemaVersion);
         Assert.Contains(manifest.Files, f => f.Path == $"artwork/{retained.Id}/original");
         var restore = Path.Combine(_directory, "restored");
         await Service.RestoreAsync(path, restore);
@@ -161,7 +161,7 @@ public sealed class CatalogBackupTests : IAsyncLifetime
         await AddAssetAsync(true);
         var backup = await Service.CreateAsync();
         var latestPath = Path.Combine(Root, backup.Backup.Filename);
-        Assert.Equal(12, (await Service.VerifyAsync(latestPath)).SchemaVersion);
+        Assert.Equal(13, (await Service.VerifyAsync(latestPath)).SchemaVersion);
         Assert.Equal(7, (await Service.VerifyAsync(oldPath)).SchemaVersion);
         var restore = Path.Combine(_directory, "groups-restored");
         await Service.RestoreAsync(latestPath, restore);

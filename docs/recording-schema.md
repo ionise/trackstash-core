@@ -2,7 +2,7 @@
 
 This document captures the intended schema design for canonical recordings, release placements, and extensible source/provider links.
 
-Status: **core tables partially implemented**. The `recording`, `recording_external_ref`, `recording_artist_credit`, `recording_relationship`, and `release_recording` tables are implemented in `src/TrackStash.Core.Sqlite/Migrations.cs` and subsequent migrations. Migration 9 adds duration and the release-placement foundation; rich BPM/key/genre fields remain absent. The embedding tables are replaced by the shared `embedding_document` table. The DDL skeleton at the bottom of this document reflects the original design intent and **does not match the actual migration**.
+Status: **core tables partially implemented**. The `recording`, `recording_external_ref`, `recording_artist_credit`, `recording_relationship`, and `release_recording` tables are implemented in `src/TrackStash.Core.Sqlite/Migrations.cs` and subsequent migrations. Migration 9 adds duration and the release-placement foundation; migration 13 adds BPM, key with notation and separate genre/subgenre lists in `recording_musical_metadata`. The embedding tables are replaced by the shared `embedding_document` table. The DDL skeleton at the bottom of this document reflects the original design intent and **does not match the actual migration**.
 
 Key differences from the actual migration:
 
@@ -17,6 +17,8 @@ See [delete-semantics.md](delete-semantics.md) for the delete rules and full rec
 The [purchase-to-release import design](../../trackstash-catalog/docs/purchase-release-import-design.md) applies the identity policy below to a complete source release. Different provider track IDs or matching ISRCs do not automatically establish one master; source order and release dates remain explicitly sourced.
 
 Migration 9 implements Recording aggregate versions/duration, stable multi-role credit occurrences, and `release_recording` placements keyed by stable GUID instead of `(release_id,recording_id)`. Placements preserve display order, source position/order provenance and optional official disc/track numbers; placement credits and provider track-listing references are independent of Recording credits/references. Multiple appearances of the same Recording in a release are supported. Existing Recording provider references are retained as-is, never silently migrated to placements. See [foundation contracts](../src/TrackStash.Core/Storage/CatalogFoundations.cs). Reviewed import, embeddings and media resolution remain later work; no live migration has occurred.
+
+Migration 13 also adds a preferred classification that must belong to the retained genre/subgenre lists, plus immutable provider-review/apply history. [Enrichment contracts](../src/TrackStash.Core/Storage/Enrichment.cs) separate canonical values from frozen provider evidence. Catalog applies selected fields atomically after version/state checks; provider matches do not merge Recordings, rewrite credits or assert media ownership. Musical metadata changes bump the Recording aggregate version, and apply history is included in schema-13 backup/restore.
 
 Related documents:
 

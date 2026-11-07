@@ -38,6 +38,7 @@ public interface IUnitOfWork : IAsyncDisposable
 
     ICatalogFoundationRepository? CatalogFoundations => null;
     IReleaseImportRepository? ReleaseImports => null;
+    IEnrichmentRepository? Enrichment => null;
 
     IMediaFileRepository MediaFiles { get; }
 

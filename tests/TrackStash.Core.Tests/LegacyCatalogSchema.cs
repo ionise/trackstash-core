@@ -6,6 +6,11 @@ namespace TrackStash.Core.Tests;
 
 internal static class LegacyCatalogSchema
 {
+    internal const string RemoveEnrichmentSql = """
+        DROP TABLE IF EXISTS enrichment_apply_revision; DROP TABLE IF EXISTS enrichment_review;
+        DROP TABLE IF EXISTS recording_musical_metadata; DROP TABLE IF EXISTS release_musical_metadata;
+        DELETE FROM schema_migration WHERE version=13;
+        """;
     internal static string CanonicalTablesSql
     {
         get
@@ -26,6 +31,8 @@ internal static class LegacyCatalogSchema
         command.CommandText = "SELECT (SELECT count(*) FROM artist)+(SELECT count(*) FROM release)+(SELECT count(*) FROM recording)";
         if (Convert.ToInt32(await command.ExecuteScalarAsync()) != 0)
             throw new InvalidOperationException("Legacy fixture reset requires empty canonical entities.");
+        command.CommandText = RemoveEnrichmentSql;
+        await command.ExecuteNonQueryAsync();
         var triggers = new List<string>();
         command.CommandText = "SELECT name FROM sqlite_master WHERE type='trigger' AND (name LIKE 'foundation_%' OR name LIKE 'placement_%' OR name LIKE 'artist_%' OR name LIKE 'release_%' OR name LIKE 'recording_%' OR name LIKE 'import_stamp_%' OR name LIKE 'embedding_invalidate_%')";
         await using (var reader = await command.ExecuteReaderAsync())

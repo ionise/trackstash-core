@@ -20,6 +20,14 @@ For caller-side artifact naming, `EntityNameNormalizer.NormalizeWithSlug(value)`
 
 Delete rules, blocker vs owned-cleanup classification, and the join-table asymmetry reference are documented in [docs/delete-semantics.md](docs/delete-semantics.md).
 
+## Reviewed metadata enrichment (schema 13)
+
+`IEnrichmentRepository` supports canonical Recording BPM/key (with explicit notation), separate genre/subgenre lists for Recordings and Releases, and an optional preferred classification retained in those lists. Scalar identity updates preserve credits, aliases, source payloads and placements; the caller supplies an original version and owns the complete reviewed transaction.
+
+Schema 13 adds `recording_musical_metadata`, `release_musical_metadata`, immutable `enrichment_review` and immutable `enrichment_apply_revision`. Musical metadata updates invalidate the entity's aggregate version. Catalog freezes provider responses, selects validated writable fields, checks full state/identity ownership, and commits metadata plus permanent before/after/source evidence together. Core storage does not call providers or infer accepted Artist/Label/track identities.
+
+Backup/restore supports catalog schemas 6-13 and includes the new data/history. Musical metadata and frozen reviews block legacy destructive replacement/deletion. Migrations are explicit: back up and verify the live catalog and obtain approval before applying pending migrations.
+
 ## Roadmap Note
 
 Planned core enhancement: image support for canonical entities (label, artist, release, recording) using normalized asset/link tables.

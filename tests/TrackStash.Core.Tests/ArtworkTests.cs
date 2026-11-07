@@ -51,9 +51,10 @@ public sealed class ArtworkTests : IAsyncLifetime
             await unit.Artwork.ReplaceLabelGalleryAsync("survivor", label.Version, [Entry(asset, true)]);
             await unit.CommitAsync();
         }
+        await ExecuteAsync(LegacyCatalogSchema.RemoveEnrichmentSql);
         await ExecuteAsync("DROP TABLE release_artwork_link; DROP TABLE release_artwork_revision; DROP TABLE artist_artwork_link; DROP TABLE artist_artwork_revision; DROP TABLE artist_profile; DROP TABLE artist_profile_revision; DELETE FROM schema_migration WHERE version>=11;");
         var migration = await Provider.Migrations.ApplyPendingMigrationsAsync();
-        Assert.Equal(12, migration.CurrentVersion); Assert.Equal(2, migration.AppliedMigrations.Count);
+        Assert.Equal(13, migration.CurrentVersion); Assert.Equal(3, migration.AppliedMigrations.Count);
         await using (var unit = await Provider.BeginUnitOfWorkAsync())
         {
             var label = (await unit.Artwork.GetLabelGalleryAsync("survivor"))!;
@@ -193,7 +194,7 @@ public sealed class ArtworkTests : IAsyncLifetime
     {
         await PrepareLegacyAsync();
         var result = await Provider.Migrations.ApplyPendingMigrationsAsync();
-        Assert.Equal(12, result.CurrentVersion);
+        Assert.Equal(13, result.CurrentVersion);
         await using var unit = await Provider.BeginUnitOfWorkAsync();
         var gallery = (await unit.Artwork.GetLabelGalleryAsync("survivor"))!;
         var item = Assert.Single(gallery.Items);
