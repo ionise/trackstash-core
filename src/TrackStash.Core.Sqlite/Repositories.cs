@@ -1170,6 +1170,38 @@ internal sealed partial class SqliteRecordingRepository : IRecordingRepository
 
 internal sealed class SqliteMediaFileRepository : IMediaFileRepository
 {
+    public async ValueTask<bool> HasConflictingRecordingMatchAsync(string contentHash, string recordingId, CancellationToken cancellationToken = default)
+    {
+        using var command = _connection.CreateCommand();
+        command.Transaction = _transaction;
+        command.CommandText = """
+            SELECT EXISTS (
+                SELECT 1 FROM media_file f JOIN media_file_recording_match m USING(media_file_id)
+                WHERE f.content_hash=@hash COLLATE NOCASE AND m.recording_id<>@recordingId
+                  AND m.override_state IN (1,3)
+            )
+            """;
+        command.Parameters.AddWithValue("@hash", contentHash);
+        command.Parameters.AddWithValue("@recordingId", recordingId);
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false)) != 0;
+    }
+    public async ValueTask<IReadOnlyList<MediaFile>> ListByRecordingAsync(string recordingId, CancellationToken cancellationToken = default)
+    {
+        using var command = _connection.CreateCommand();
+        command.Transaction = _transaction;
+        command.CommandText = """
+            SELECT f.media_file_id,f.path,f.normalized_path,f.content_hash,f.metadata_json,f.fingerprint,
+                   f.source_payload_json,f.created_utc,f.updated_utc
+            FROM media_file f JOIN media_file_recording_match m USING(media_file_id)
+            WHERE m.recording_id=@id AND m.override_state IN (1,3)
+            ORDER BY f.media_file_id LIMIT 101
+            """;
+        command.Parameters.AddWithValue("@id", recordingId);
+        var files = new List<MediaFile>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) files.Add(ReadMediaFile(reader));
+        return files;
+    }
     private readonly SqliteConnection _connection;
     private readonly SqliteTransaction _transaction;
 

@@ -139,6 +139,10 @@ public interface IRecordingRepository
 
 public interface IMediaFileRepository
 {
+    ValueTask<IReadOnlyList<MediaFile>> ListByRecordingAsync(string recordingId, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Linked media listing is not supported by this storage provider.");
+    ValueTask<bool> HasConflictingRecordingMatchAsync(string contentHash, string recordingId, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Content identity conflict checking is not supported by this storage provider.");
     ValueTask<MediaFile?> GetByIdAsync(string mediaFileId, CancellationToken cancellationToken = default);
 
     ValueTask<MediaFile?> GetByPathAsync(string path, CancellationToken cancellationToken = default);

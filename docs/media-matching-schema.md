@@ -4,6 +4,8 @@ This document captures the planned Trackstash schema additions for matching medi
 
 Status: design only. This extends the existing `media_file` and `metadata` tables in `Initialize-TrackstashDatabase`.
 
+The separate canonical Catalog now provides an initial **explicit reviewed media-link workflow** using its existing `media_file`, `media_file_recording_match` and schema-13 immutable enrichment review/audit tables. Scanner database path and integer file ID form a source-scoped media identity, not a canonical Recording ID. Verified SHA-256 and metadata/scoped-sidecar evidence support Manual associations; `Score`/`Confidence` remain zero rather than invented certainty. Storage lists accepted/manual copies with a 101-row overflow sentinel and checks *all* accepted/manual associations of identical hashes for conflicting Recordings, case-insensitively. This does not implement the scanner embeddings/automatic strategies planned below, replace existing associations, copy audio or assert ownership. See [Catalog workflow](../../trackstash-catalog/README.md#reviewed-filesystem-media-links).
+
 Related documents:
 
 - [recording-schema.md](recording-schema.md) for canonical recording identity tables.
