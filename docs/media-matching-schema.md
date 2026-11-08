@@ -8,6 +8,8 @@ The separate canonical Catalog now provides an initial **explicit reviewed media
 
 Related documents:
 
+Catalog also retains a separate `MediaReleaseGroup` metadata association as a Release-scoped schema-13 review plus apply audit. `IEnrichmentRepository.ListAppliedReviewsAsync` lists applied typed application payloads with a 1001-row overflow sentinel; Catalog treats more than 1000 as an explicit limit error. Association membership and Release context are frozen/rechecked, with no new schema, Recording links, placement writes or scanner writes.
+
 - [recording-schema.md](recording-schema.md) for canonical recording identity tables.
 - [label-schema.md](label-schema.md) for label-domain tables.
 - [release-schema.md](release-schema.md) for release-domain tables.

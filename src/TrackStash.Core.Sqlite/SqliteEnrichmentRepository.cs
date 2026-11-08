@@ -7,6 +7,20 @@ namespace TrackStash.Core.Sqlite;
 
 internal sealed class SqliteEnrichmentRepository(SqliteConnection connection, SqliteTransaction transaction) : IEnrichmentRepository
 {
+    public async ValueTask<IReadOnlyList<StoredEnrichmentReview>> ListAppliedReviewsAsync(string payloadType, CancellationToken ct = default)
+    {
+        using var command = Command("""
+            SELECT r.review_id,r.entity_kind,r.entity_id,r.version,r.payload_json,r.created_utc
+            FROM enrichment_review r JOIN enrichment_apply_revision a USING(review_id)
+            WHERE json_extract(r.payload_json,'$.Type')=@type ORDER BY r.review_id LIMIT 1001
+            """, ("@type", payloadType));
+        var reviews = new List<StoredEnrichmentReview>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            reviews.Add(new(reader.GetString(0), Enum.Parse<CatalogEntityKind>(reader.GetString(1)), reader.GetString(2),
+                reader.GetString(3), reader.GetString(4), DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture)));
+        return reviews;
+    }
     public async ValueTask UpdateEntityAsync(CanonicalEntity entity, string expectedVersion, CancellationToken ct = default)
     {
         var table = entity switch

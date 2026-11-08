@@ -15,6 +15,9 @@ public sealed record EnrichmentApplyAudit(string ReviewId, string FieldsJson, st
 
 public interface IEnrichmentRepository
 {
+    /// <summary>Read applied typed application reviews, with a 1001-row overflow sentinel.</summary>
+    ValueTask<IReadOnlyList<StoredEnrichmentReview>> ListAppliedReviewsAsync(string payloadType, CancellationToken ct = default)
+        => throw new NotSupportedException("Typed applied review listing is not supported.");
     /// <summary>Update scalar identity metadata and add references, preserving all credits, aliases and placements.</summary>
     ValueTask UpdateEntityAsync(CanonicalEntity entity, string expectedVersion, CancellationToken ct = default);
     ValueTask<CatalogMusicalMetadata> GetMetadataAsync(CatalogEntityKind kind, string id, CancellationToken ct = default);
