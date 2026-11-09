@@ -27,6 +27,8 @@ public sealed class MediaLinkPersistenceTests
             }
             Assert.Equal(new[] { "a", "b" }, (await unit.MediaFiles.ListByRecordingAsync("r1")).Select(f => f.Id));
             Assert.Empty(await unit.MediaFiles.ListByRecordingAsync("r2"));
+            Assert.Equal(2, await unit.MediaFiles.CountByRecordingAsync("r1"));
+            Assert.Equal(0, await unit.MediaFiles.CountByRecordingAsync("r2"));
             Assert.False(await unit.MediaFiles.HasConflictingRecordingMatchAsync("abcd", "r1"));
             Assert.True(await unit.MediaFiles.HasConflictingRecordingMatchAsync("abcd", "r2"));
             await unit.Matches.SetUserOverrideAsync("d", "r2", MatchOverrideState.Manual);
@@ -53,6 +55,7 @@ public sealed class MediaLinkPersistenceTests
                 await unit.Matches.UpsertBestMatchAsync(new MatchRecord { MediaFileId = id, RecordingId = "r", OverrideState = MatchOverrideState.Manual });
             }
             Assert.Equal(101, (await unit.MediaFiles.ListByRecordingAsync("r")).Count);
+            Assert.Equal(102, await unit.MediaFiles.CountByRecordingAsync("r"));
             await unit.CommitAsync();
         }
         finally { if (File.Exists(path)) File.Delete(path); }

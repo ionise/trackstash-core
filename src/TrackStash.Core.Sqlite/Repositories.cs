@@ -1202,6 +1202,17 @@ internal sealed class SqliteMediaFileRepository : IMediaFileRepository
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) files.Add(ReadMediaFile(reader));
         return files;
     }
+    public async ValueTask<int> CountByRecordingAsync(string recordingId, CancellationToken cancellationToken = default)
+    {
+        using var command = _connection.CreateCommand();
+        command.Transaction = _transaction;
+        command.CommandText = """
+            SELECT COUNT(*) FROM media_file f JOIN media_file_recording_match m USING(media_file_id)
+            WHERE m.recording_id=@id AND m.override_state IN (1,3)
+            """;
+        command.Parameters.AddWithValue("@id", recordingId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
+    }
     private readonly SqliteConnection _connection;
     private readonly SqliteTransaction _transaction;
 

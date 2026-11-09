@@ -139,6 +139,8 @@ public interface IRecordingRepository
 
 public interface IMediaFileRepository
 {
+    ValueTask<int> CountByRecordingAsync(string recordingId, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Linked media counting is not supported by this storage provider.");
     ValueTask<IReadOnlyList<MediaFile>> ListByRecordingAsync(string recordingId, CancellationToken cancellationToken = default)
         => throw new NotSupportedException("Linked media listing is not supported by this storage provider.");
     ValueTask<bool> HasConflictingRecordingMatchAsync(string contentHash, string recordingId, CancellationToken cancellationToken = default)
