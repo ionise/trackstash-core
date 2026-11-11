@@ -99,7 +99,8 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
             command.Transaction = transaction;
             command.CommandText = "SELECT 1 FROM bpc_release WHERE beatport_release_id = @id AND in_purchase_corpus = 1";
             command.Parameters.AddWithValue("@id", releaseId);
-            if (await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is null) return null;
+            var inCorpus = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
+            if (!inCorpus && !query.AllowCachedRelease) return null;
             command.CommandText = "SELECT release_json, fetched_utc FROM beatport_release_cache WHERE beatport_release_id = @id";
             string? payload = null, fetched = null;
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
@@ -117,8 +118,10 @@ public sealed class SqlitePurchaseReleaseSource : IPurchaseReleaseSource
                 if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                     (payload, fetched) = Newer((payload, fetched), (reader.GetString(0), reader.GetString(1)));
             }
-            return await InspectCoreAsync(releaseId, payload, fetched, query,
+            if (!inCorpus && payload is null) return null;
+            var inspection = await InspectCoreAsync(releaseId, payload, fetched, query,
                 (ids, ct) => LoadTracksAsync(connection, transaction, ids, broker, ct), cancellationToken).ConfigureAwait(false);
+            return inCorpus ? inspection : inspection with { SourceKind = "catalog_cache" };
         }
         catch (SqliteException ex) { throw new PurchaseSourceUnavailableException("The Beatport cache schema could not be read.", ex); }
     }

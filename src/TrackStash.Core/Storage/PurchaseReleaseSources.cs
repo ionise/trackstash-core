@@ -2,6 +2,8 @@ namespace TrackStash.Core.Storage;
 
 public sealed record PurchaseReleaseQuery(int Page = 1, int PageSize = 25, string? Search = null)
 {
+    /// <summary>For explicit Catalog admission, inspect a cached non-corpus release without claiming a purchase. Does not widen corpus listings.</summary>
+    public bool AllowCachedRelease { get; init; }
     /// <summary>Provider release IDs to omit before paging, such as releases already admitted to the catalog.</summary>
     public IReadOnlyCollection<long>? ExcludedReleaseIds { get; init; }
     /// <summary>When set, only these provider release IDs are eligible, applied before paging.</summary>
