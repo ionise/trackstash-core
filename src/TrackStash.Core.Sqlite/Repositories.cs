@@ -1170,7 +1170,13 @@ internal sealed partial class SqliteRecordingRepository : IRecordingRepository
 
 internal sealed class SqliteMediaFileRepository : IMediaFileRepository
 {
-    public async ValueTask<bool> HasConflictingRecordingMatchAsync(string contentHash, string recordingId, CancellationToken cancellationToken = default)
+    public ValueTask<bool> HasConflictingRecordingMatchExceptAsync(string contentHash, string recordingId, string mediaFileId, CancellationToken cancellationToken = default)
+        => HasConflictingRecordingMatchAsync(contentHash, recordingId, mediaFileId, cancellationToken);
+
+    public ValueTask<bool> HasConflictingRecordingMatchAsync(string contentHash, string recordingId, CancellationToken cancellationToken = default)
+        => HasConflictingRecordingMatchAsync(contentHash, recordingId, null, cancellationToken);
+
+    private async ValueTask<bool> HasConflictingRecordingMatchAsync(string contentHash, string recordingId, string? excludedMediaFileId, CancellationToken cancellationToken)
     {
         using var command = _connection.CreateCommand();
         command.Transaction = _transaction;
@@ -1178,11 +1184,13 @@ internal sealed class SqliteMediaFileRepository : IMediaFileRepository
             SELECT EXISTS (
                 SELECT 1 FROM media_file f JOIN media_file_recording_match m USING(media_file_id)
                 WHERE f.content_hash=@hash COLLATE NOCASE AND m.recording_id<>@recordingId
+                  AND (@excludedMediaFileId IS NULL OR f.media_file_id<>@excludedMediaFileId)
                   AND m.override_state IN (1,3)
             )
             """;
         command.Parameters.AddWithValue("@hash", contentHash);
         command.Parameters.AddWithValue("@recordingId", recordingId);
+        command.Parameters.AddWithValue("@excludedMediaFileId", (object?)excludedMediaFileId ?? DBNull.Value);
         return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false)) != 0;
     }
     public async ValueTask<IReadOnlyList<MediaFile>> ListByRecordingAsync(string recordingId, CancellationToken cancellationToken = default)
